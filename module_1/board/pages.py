@@ -7,9 +7,9 @@ def home():
     return render_template("pages/homepage.html")
 
 @bp.route("/projects")
-def about():
+def projects():
     return render_template("pages/projects.html")
 
 @bp.route("/contact")
-def about():
+def contact():
     return render_template("pages/contact.html")
