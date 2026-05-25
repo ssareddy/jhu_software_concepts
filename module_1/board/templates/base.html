@@ -2,9 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <title>
+        Shrithik Sareddy (He/Him)
+    </title>
 </head>
 <body>
-
+<h1>Message Board</h1>
+<section>
+    <header>
+        {% block header %}{% endblock header %}
+    </header>
+    <main>
+        {% block content %}
+        <p>
+            No messages.
+        </p>
+        {% endblock content %}
+    </main>
+</section>
 </body>
 </html>
