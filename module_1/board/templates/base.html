@@ -3,22 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <title>
-        Shrithik Sareddy (He/Him)
+        {% block title %}{% endblock title %}
     </title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-<h1>Message Board</h1>
-<section>
-    <header>
-        {% block header %}{% endblock header %}
-    </header>
-    <main>
-        {% block content %}
-        <p>
-            No messages.
-        </p>
-        {% endblock content %}
-    </main>
-</section>
+{% include("_navigation.html") %}
+<div class="page-content">
+    {% block content %}{% endblock content %}
+</div>
 </body>
 </html>
