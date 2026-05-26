@@ -10,14 +10,19 @@ Home
 
 <h2>Software Engineer 2 at Lockheed Martin</h2>
 
-<p>
-    I am Software Engineer at Lockheed Martin Space where I specialize in developing and testing hardware
-    components that will be used in many programs such as Dragonfly. A NASA program to deploy a drone-copter on
-    Saturn's moon, Titan. I have bachelor's degree in computer science and engineering from University of
-    California - Merced and currently working on my masters in Artificial Intelligence at John Hopkin's
-    University. I have been working as an engineer for almost 5 years with almost 2 years at Lockheed Martin.
-</p>
-
-<img src="{{ url_for('static',filename='images/profile.jpg') }}" alt="Profile Picture">
+<div class="layout">
+    <div class="biography">
+        <p>
+            I am Software Engineer at Lockheed Martin Space where I specialize in developing and testing hardware
+            components that will be used in many programs such as Dragonfly. A NASA program to deploy a drone-copter on
+            Saturn's moon, Titan. I have bachelor's degree in computer science and engineering from University of
+            California - Merced and currently working on my masters in Artificial Intelligence at Johns Hopkins
+            University. I have been working as an engineer for almost 5 years with almost 2 years at Lockheed Martin.
+        </p>
+    </div>
+    <div class="profile">
+        <img src="{{ url_for('static',filename='images/profile.jpg') }}" alt="Profile Picture">
+    </div>
+</div>
 
 {% endblock content %}

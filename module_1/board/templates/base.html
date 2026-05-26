@@ -5,10 +5,27 @@
     <title>
         {% block title %}{% endblock title %}
     </title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-{% include("_navigation.html") %}
+
+<nav class="navbar">
+    <div class="nav-right">
+        <a href="{{ url_for('pages.about') }}"
+           class="{% if request.path == '/' %}active{% endif %}">
+            About
+        </a>
+        <a href="{{ url_for('pages.projects') }}"
+           class="{% if request.path == '/projects' %}active{% endif %}">
+            Publications
+        </a>
+        <a href="{{ url_for('pages.contact') }}"
+           class="{% if request.path == '/contact' %}active{% endif %}">
+            Contact
+        </a>
+    </div>
+</nav>
+
 <div class="page-content">
     {% block content %}{% endblock content %}
 </div>
