@@ -8,6 +8,7 @@ def create_app():
     """
 
     app = Flask(__name__)
+    # Registering blueprints with webpage information
     app.register_blueprint(pages.bp)
 
     return app
