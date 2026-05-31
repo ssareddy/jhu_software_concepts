@@ -42,6 +42,7 @@ from typing import Any
 # Configuration
 # ---------------------------------------------------------------------------
 
+RAW_FILE   = Path("raw_results.json")
 CLEAN_FILE = Path("applicant_data.json")
 
 # Mapping common status strings to canonical values
@@ -342,7 +343,7 @@ def load_data(path: Path = CLEAN_FILE) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from scrape import scrape_data
-    raw = scrape_data()
+    with open(RAW_FILE, encoding="utf-8") as fh:
+        raw = json.load(fh)
     cleaned = clean_data(raw)
     save_data(cleaned)

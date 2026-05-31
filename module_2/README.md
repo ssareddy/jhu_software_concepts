@@ -2,7 +2,7 @@
 
 ## 1. Name
 
-Saishrithik Sareddy — ID: 9A9D11
+Saishrithik Sareddy — 9A9D11
 
 ---
 
@@ -10,7 +10,8 @@ Saishrithik Sareddy — ID: 9A9D11
 
 - **Module:** Module 2
 - **Assignment:** Web Scraping & Data Cleaning — Grad Cafe Applicant Data
-- **Due Date:** [INSERT DUE DATE]
+- **Due Date:** 05/31/2026
+
 ---
 
 ## 3. Approach
@@ -47,13 +48,15 @@ BeautifulSoup's `find_all()` and `get_text()`, capturing:
 - Cell 2: date the entry was added to Grad Cafe
 - Cell 3: applicant notes containing GPA, GRE scores, comments, student type
 - Anchor tag href: URL link to the individual applicant entry
+
 Polite behavior is maintained with a 2–4 second variable delay between page
 requests plus a 2 second wait for JS content to settle. The scraper stops
 immediately if a page returns no records, which may indicate rate-limiting.
 
 ### Cleaning (`clean.py`)
 
-`clean_data()` iterates over the raw records returned by `scrape_data()` and
+`scrape_data()` saves raw records to `raw_results.json` as an intermediate file.
+`clean_data()` reads from `raw_results.json`, iterates over the records, and
 calls `_clean_record()` on each one. All extraction uses Python string methods
 and `re` (regex) — no external services.
 
@@ -67,6 +70,7 @@ and `re` (regex) — no external services.
 - `_extract_student_type()` detects `American / International` from keywords
 - `_extract_semester_year()` extracts terms like `Fall 2024` via regex
 - `_strip_html()` removes residual HTML tags and entities from all text fields
+
 Raw scraped text is preserved alongside cleaned fields in every record for
 traceability. Missing values are represented as `null`.
 

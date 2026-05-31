@@ -42,6 +42,9 @@ MAX_PAGES = 1500
 # Selenium explicit-wait timeout (seconds)
 WAIT_TIMEOUT = 15
 
+# Intermediate file storing raw scraped records for input to clean.py
+RAW_FILE = Path("raw_results.json")
+
 
 # ---------------------------------------------------------------------------
 # URL helpers (urllib)
@@ -245,7 +248,7 @@ def _parse_page(html: str) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(max_pages: int = MAX_PAGES) -> list[dict]:
+def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> list[dict]:
     """
     Main scraping entry point.
 
@@ -292,7 +295,8 @@ def scrape_data(max_pages: int = MAX_PAGES) -> list[dict]:
     finally:
         driver.quit()
 
-    print(f"[scrape] Done. {len(all_records):,} raw records collected.")
+    _save_raw(all_records, output_file)
+    print(f"[scrape] Done. {len(all_records):,} raw records saved to {output_file}.")
     return all_records
 
 
@@ -301,7 +305,4 @@ def scrape_data(max_pages: int = MAX_PAGES) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from clean import clean_data, save_data
-    raw = scrape_data()
-    cleaned = clean_data(raw)
-    save_data(cleaned)
+    scrape_data()
