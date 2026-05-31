@@ -104,3 +104,7 @@ title-case normalization, canonical list matching, and fuzzy matching via `diffl
 - Acceptance and rejection dates are embedded within the status text field rather
   than in a dedicated field. They are extracted via the regex date parser, which
   may miss unusual date formats.
+- Occasional read timeouts occur when Grad Cafe rate-limits requests. The scraper
+  retries each failed page up to 2 times with a 10-20 second wait between attempts.
+  If all retries fail the page is skipped and scraping continues. If many consecutive
+  pages fail, the scraper stops as required by the assignment.

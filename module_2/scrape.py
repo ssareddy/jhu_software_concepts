@@ -36,7 +36,7 @@ SEARCH_PATH = "/survey/"
 MIN_DELAY = 2.0
 MAX_DELAY = 4.0
 
-# How many pages to scrape (each page ~25 records; 1,500 pages ~30,000+)
+# How many pages to scrape (each page ~20 records; 1,500 pages ~30,000+)
 MAX_PAGES = 1500
 
 # Selenium explicit-wait timeout (seconds)
@@ -50,7 +50,7 @@ RAW_FILE = Path("raw_results.json")
 # URL helpers (urllib)
 # ---------------------------------------------------------------------------
 
-def _build_search_url(page: int, per_page: int = 25) -> str:
+def _build_search_url(page: int, per_page: int = 20) -> str:
     """
     Construct a Grad Cafe survey URL for the given page number.
     Uses urllib.parse to build the query string safely.
@@ -143,25 +143,35 @@ def _build_driver() -> webdriver.Chrome:
     return webdriver.Chrome(options=options)
 
 
-def _get_page_source(driver: webdriver.Chrome, url: str) -> str | None:
+def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 2) -> str | None:
     """
     Navigate to url with Selenium, wait for the page body to load,
     and return the fully rendered page source. Returns None on failure.
+
+    Retries up to `retries` times on timeout with an increasing wait
+    between attempts. A timeout may indicate a transient network issue
+    rather than a deliberate block. If all attempts fail, returns None
+    and the caller decides whether to skip or stop.
     """
-    try:
-        driver.get(url)
-        # Wait for body — works regardless of exact HTML structure
-        WebDriverWait(driver, WAIT_TIMEOUT).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
-        # Short pause to let JS-rendered content settle
-        time.sleep(2)
-        source = driver.page_source
-        print(f"[Selenium] Loaded: {driver.title!r} ({len(source):,} chars)")
-        return source
-    except Exception as exc:
-        print(f"[Selenium] Could not load {url}: {exc}")
-        return None
+    for attempt in range(1, retries + 2):
+        try:
+            driver.get(url)
+            # Wait for body — works regardless of exact HTML structure
+            WebDriverWait(driver, WAIT_TIMEOUT).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            # Short pause to let JS-rendered content settle
+            time.sleep(2)
+            source = driver.page_source
+            print(f"[Selenium] Loaded: {driver.title!r} ({len(source):,} chars)")
+            return source
+        except Exception as exc:
+            print(f"[Selenium] Attempt {attempt}/{retries + 1} failed for {url}: {exc}")
+            if attempt <= retries:
+                wait = 10 * attempt  # 10s then 20s before retrying
+                print(f"[Selenium] Waiting {wait}s before retry...")
+                time.sleep(wait)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -292,12 +302,23 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> lis
             print(f"[scrape] Page {page_num}: {len(records)} records "
                   f"(total: {len(all_records):,})")
 
+            # Incremental save every 50 pages
+            if page_num % 50 == 0:
+                _save_raw(all_records, output_file)
+                print(f"[scrape] Checkpoint saved ({len(all_records):,} records).")
+
     finally:
         driver.quit()
 
     _save_raw(all_records, output_file)
     print(f"[scrape] Done. {len(all_records):,} raw records saved to {output_file}.")
     return all_records
+
+
+def _save_raw(records: list[dict], path: Path) -> None:
+    """Persist raw records to a JSON file (incremental checkpoint)."""
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(records, fh, ensure_ascii=False, indent=2)
 
 
 # ---------------------------------------------------------------------------
