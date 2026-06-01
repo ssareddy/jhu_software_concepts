@@ -75,6 +75,18 @@ _DEGREE_MAP = {
     "mba": "Masters",
     "meng": "Masters",
     "m.eng": "Masters",
+    "psyd": "PhD",
+    "psy.d": "PhD",
+    "edd": "PhD",
+    "ed.d": "PhD",
+    "dma": "PhD",
+    "jd": "Masters",
+    "llm": "Masters",
+    "mfa": "Masters",
+    "mpp": "Masters",
+    "mpa": "Masters",
+    "mph": "Masters",
+    "msw": "Masters",
 }
 
 
@@ -263,6 +275,18 @@ def _clean_record(raw: dict) -> dict:
     university, program_name = _split_institution_program(
         raw.get("raw_institution_program", "")
     )
+
+    # If program_name not found in institution field, check raw_degree_status.
+    # Grad Cafe sometimes puts the program name there (e.g. "Clinical Psychology PsyD").
+    if not program_name:
+        degree_status = raw.get("raw_degree_status", "")
+        # Strip the degree type keywords to isolate the program name
+        program_name = re.sub(
+            r"(phd|ph\.d|psyd|psy\.d|edd|ed\.d|doctoral|doctorate|"
+            r"masters?|ms|m\.s|ma|m\.a|mba|meng|m\.eng|mfa|mpp|mpa|"
+            r"mph|msw|jd|llm|dma)",
+            "", degree_status, flags=re.I
+        ).strip().strip(",").strip() or None
 
     return {
         "program_name":            program_name,

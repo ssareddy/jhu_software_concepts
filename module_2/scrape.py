@@ -215,6 +215,26 @@ def _parse_entry(row) -> dict:
     #         student type (International/American), semester/year
     raw_notes = cells[3].get_text(separator=" ", strip=True) if len(cells) > 3 else ""
 
+    # Some entries have additional cells or a sibling row containing tags
+    # such as semester, student type, and GPA (e.g. "Fall 2026", "International", "GPA 3.40").
+    # Collect all extra cell text and the next sibling row text into raw_tags.
+    extra_parts = []
+    for cell in cells[4:]:
+        text = cell.get_text(separator=" ", strip=True)
+        if text:
+            extra_parts.append(text)
+
+    # Check the next sibling row for tag-style data
+    next_row = row.find_next_sibling("tr")
+    if next_row:
+        next_text = next_row.get_text(separator=" ", strip=True)
+        if next_text:
+            extra_parts.append(next_text)
+
+    # Merge extra tag data into raw_notes so clean.py extractors can find it
+    if extra_parts:
+        raw_notes = (raw_notes + " " + " ".join(extra_parts)).strip()
+
     # URL link to the individual applicant entry
     link_tag = row.find("a", href=True)
     url = ""

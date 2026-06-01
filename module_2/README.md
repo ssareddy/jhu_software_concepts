@@ -118,6 +118,11 @@ title-case normalization, canonical list matching, and fuzzy matching via `diffl
 - Acceptance and rejection dates are embedded within the status text field rather
   than in a dedicated field. They are extracted via the regex date parser, which
   may miss unusual date formats.
+- Some entries display GPA, semester, and student type as HTML tags in a
+  sub-row or extra cells below the main result row (e.g. `Fall 2026`,
+  `International`, `GPA 3.40`). The fixed `_parse_entry()` captures these by
+  reading extra cells and the next sibling row and appending them to `raw_notes`.
+  Entries scraped before this fix will have `null` for these fields.
 - Occasional read timeouts occur when Grad Cafe rate-limits requests. The scraper
   retries each failed page up to 2 times with a 10-20 second wait between attempts.
   If all retries fail the page is skipped and scraping continues. If many consecutive
