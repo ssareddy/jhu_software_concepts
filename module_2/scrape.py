@@ -143,7 +143,7 @@ def _build_driver() -> webdriver.Chrome:
     return webdriver.Chrome(options=options)
 
 
-def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 2) -> str | None:
+def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> str | None:
     """
     Navigate to url with Selenium, wait for the page body to load,
     and return the fully rendered page source. Returns None on failure.
@@ -155,8 +155,10 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 2) -> st
     """
     for attempt in range(1, retries + 2):
         try:
+            print(f"[Selenium] Attempt {attempt}/{retries + 1}: navigating to {url}")
             driver.get(url)
             # Wait for body — works regardless of exact HTML structure
+            print(f"[Selenium] Waiting for page body...")
             WebDriverWait(driver, WAIT_TIMEOUT).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -319,7 +321,7 @@ def _load_existing_records(output_file: Path) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> list[dict]:
+def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> None:
     """
     Main scraping entry point.
 
@@ -359,7 +361,7 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
                 _write_resume_marker(all_records, page_num, output_file)
                 print(f"[scrape] Resume marker written. "
                       f"Run again to continue from page {page_num}.")
-                break
+                return
 
             records = _parse_page(html)
             if not records:
@@ -368,7 +370,7 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
                 _write_resume_marker(all_records, page_num, output_file)
                 print(f"[scrape] Resume marker written. "
                       f"Run again to continue from page {page_num}.")
-                break
+                return
 
             for r in records:
                 r["source_page"] = page_num
@@ -387,7 +389,6 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
 
     _save_raw(all_records, output_file)
     print(f"[scrape] Done. {len(all_records):,} raw records saved to {output_file}.")
-    return all_records
 
 
 def _save_raw(records: list[dict], path: Path) -> None:
