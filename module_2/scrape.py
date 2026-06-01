@@ -33,8 +33,8 @@ BASE_URL = "https://www.thegradcafe.com"
 SEARCH_PATH = "/survey/"
 
 # Polite delay range (seconds) between page requests
-MIN_DELAY = 2.0
-MAX_DELAY = 4.0
+MIN_DELAY = 1.0
+MAX_DELAY = 2.0
 
 # How many pages to scrape (each page ~20 records; 1,500 pages ~30,000+)
 MAX_PAGES = 1500
@@ -255,10 +255,71 @@ def _parse_page(html: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Resume helper
+# ---------------------------------------------------------------------------
+
+def _get_resume_page(output_file: Path) -> int:
+    """
+    Read raw_results.json and return the next page to scrape based on
+    the '_resume_from_page' marker written on failure. If no marker exists
+    and no file exists, returns 1.
+    """
+    if not output_file.exists():
+        return 1
+    try:
+        with open(output_file, encoding="utf-8") as fh:
+            data = json.load(fh)
+        # Check for resume marker (written on failure/stop)
+        if isinstance(data, dict) and "_resume_from_page" in data:
+            resume = data["_resume_from_page"]
+            print(f"[scrape] Resume marker found. Resuming from page {resume}.")
+            return resume
+        # Fallback: infer from records
+        if isinstance(data, list) and data:
+            last_page = max(r.get("source_page", 0) for r in data)
+            resume = last_page + 1
+            print(f"[scrape] Found {len(data):,} existing records. "
+                  f"Resuming from page {resume}.")
+            return resume
+        return 1
+    except Exception as exc:
+        print(f"[scrape] Could not read {output_file}: {exc}. Starting from page 1.")
+        return 1
+
+
+def _write_resume_marker(records: list[dict], next_page: int, path: Path) -> None:
+    """
+    Save records plus a '_resume_from_page' marker so the next run
+    knows where to continue. The marker is removed once scraping completes
+    successfully via _save_raw (which writes a clean list with no marker).
+    """
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"_resume_from_page": next_page, "records": records},
+                  fh, ensure_ascii=False, indent=2)
+
+
+def _load_existing_records(output_file: Path) -> list[dict]:
+    """Load existing records from raw_results.json, handling both
+    plain list format and the resume-marker dict format."""
+    if not output_file.exists():
+        return []
+    try:
+        with open(output_file, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "records" in data:
+            return data["records"]
+    except Exception:
+        pass
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> list[dict]:
+def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> list[dict]:
     """
     Main scraping entry point.
 
@@ -267,15 +328,23 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> lis
     3. Renders each page with Selenium.
     4. Parses each page with BeautifulSoup / regex / string methods.
     5. Returns a list of raw applicant record dicts.
+
+    Args:
+        max_pages:   Maximum number of survey pages to scrape.
+        output_file: Path to save raw records (default: raw_results.json).
+        start_page:  Page to start from. Use this to resume a previous run.
     """
     if not check_robots_txt():
         raise RuntimeError("robots.txt disallows scraping /survey/. Aborting.")
 
-    all_records: list[dict] = []
+    # Load any existing records from a previous run
+    all_records: list[dict] = _load_existing_records(output_file)
+    if all_records:
+        print(f"[scrape] Loaded {len(all_records):,} existing records.")
     driver = _build_driver()
 
     try:
-        for page_num in range(1, max_pages + 1):
+        for page_num in range(start_page, max_pages + 1):
             url = _build_search_url(page=page_num)
             print(f"[scrape] Page {page_num}: {url}")
 
@@ -293,6 +362,9 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> lis
             if not records:
                 print(f"[scrape] Page {page_num}: no records found — "
                       "site may be blocking. Stopping early.")
+                _write_resume_marker(all_records, page_num, output_file)
+                print(f"[scrape] Resume marker written. "
+                      f"Run again to continue from page {page_num}.")
                 break
 
             for r in records:
@@ -302,7 +374,7 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> lis
             print(f"[scrape] Page {page_num}: {len(records)} records "
                   f"(total: {len(all_records):,})")
 
-            # Incremental save every 50 pages
+            # Incremental checkpoint every 50 pages
             if page_num % 50 == 0:
                 _save_raw(all_records, output_file)
                 print(f"[scrape] Checkpoint saved ({len(all_records):,} records).")
@@ -316,7 +388,8 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE) -> lis
 
 
 def _save_raw(records: list[dict], path: Path) -> None:
-    """Persist raw records to a JSON file (incremental checkpoint)."""
+    """Persist raw records to a JSON file (incremental checkpoint).
+    Writes a clean list with no resume marker — call this on success."""
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(records, fh, ensure_ascii=False, indent=2)
 
@@ -326,4 +399,8 @@ def _save_raw(records: list[dict], path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    scrape_data()
+    import sys
+    # Automatically resumes from where the last run stopped.
+    # Optionally pass a page number to override: python scrape.py 101
+    start = int(sys.argv[1]) if len(sys.argv) > 1 else _get_resume_page(RAW_FILE)
+    scrape_data(start_page=start)

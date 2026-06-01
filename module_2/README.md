@@ -76,6 +76,17 @@ traceability. Missing values are represented as `null`.
 
 `save_data()` writes the cleaned records to `applicant_data.json` as valid JSON.
 
+### Resume Mechanism (`scrape.py`)
+
+If the scraper stops early due to a 500 error, rate-limiting, or any other
+failure, it writes a `_resume_from_page` marker into `raw_results.json` along
+with all records collected so far. On the next run, `python scrape.py` with no
+arguments automatically detects the marker, loads the existing records, and
+resumes from the page where it stopped. No manual intervention is needed.
+
+Once scraping completes successfully, `_save_raw()` writes a clean JSON array
+with no marker so the file is ready for `clean.py`.
+
 ### LLM Standardization (`llm_hosting/app.py`)
 
 The provided starter code was incorporated as-is and debugged for Python 3.10+
