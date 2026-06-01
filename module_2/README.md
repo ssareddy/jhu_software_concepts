@@ -78,11 +78,14 @@ traceability. Missing values are represented as `null`.
 
 ### Resume Mechanism (`scrape.py`)
 
-If the scraper stops early due to a 500 error, rate-limiting, or any other
-failure, it writes a `_resume_from_page` marker into `raw_results.json` along
-with all records collected so far. On the next run, `python scrape.py` with no
-arguments automatically detects the marker, loads the existing records, and
-resumes from the page where it stopped. No manual intervention is needed.
+If the scraper encounters any failure — timeout, 500 error, or rate-limiting —
+it immediately stops, writes a `_resume_from_page` marker into `raw_results.json`
+along with all records collected so far, and exits cleanly. Stopping immediately
+ensures Selenium objects are fully torn down and recreated fresh on the next run.
+
+Running `python scrape.py` again with no arguments automatically detects the
+marker, loads the existing records, and resumes from the page where it stopped.
+No manual intervention or arguments are needed.
 
 Once scraping completes successfully, `_save_raw()` writes a clean JSON array
 with no marker so the file is ready for `clean.py`.

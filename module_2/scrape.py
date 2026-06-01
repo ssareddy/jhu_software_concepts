@@ -355,8 +355,11 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
 
             html = _get_page_source(driver, url)
             if html is None:
-                print(f"[scrape] Page {page_num}: failed to load. Skipping.")
-                continue
+                print(f"[scrape] Page {page_num}: failed to load. Stopping.")
+                _write_resume_marker(all_records, page_num, output_file)
+                print(f"[scrape] Resume marker written. "
+                      f"Run again to continue from page {page_num}.")
+                break
 
             records = _parse_page(html)
             if not records:
