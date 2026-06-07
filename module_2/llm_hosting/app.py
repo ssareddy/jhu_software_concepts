@@ -171,37 +171,41 @@ def _best_match(name: str, candidates: List[str], cutoff: float = 0.86) -> str |
 
 
 def _post_normalize_program(prog: str) -> str:
-    """Apply common fixes, title case, then canonical/fuzzy mapping."""
+    """Apply common fixes then canonical/fuzzy mapping. Preserve original casing."""
     p = (prog or "").strip()
     p = COMMON_PROG_FIXES.get(p, p)
-    p = p.title()
     if p in CANON_PROGS:
         return p
-    match = _best_match(p, CANON_PROGS, cutoff=0.84)
-    return match or p
+    # Try title-cased version against canon list
+    p_title = p.title()
+    if p_title in CANON_PROGS:
+        return p_title
+    match = _best_match(p_title, CANON_PROGS, cutoff=0.84)
+    return match or p  # return original casing if no canon match
 
 
 def _post_normalize_university(uni: str) -> str:
-    """Expand abbreviations, apply common fixes, capitalization, and canonical map."""
+    """Expand abbreviations, apply common fixes, and canonical/fuzzy map.
+    Preserves original casing — avoids mangling acronyms like CUNY, EPFL, UCLA.
+    """
     u = (uni or "").strip()
 
-    # Abbreviations
+    # Abbreviations (exact match)
     for pat, full in ABBREV_UNI.items():
         if re.fullmatch(pat, u):
             u = full
             break
 
-    # Common spelling fixes
+    # Common spelling fixes (exact key match preserves casing of the value)
     u = COMMON_UNI_FIXES.get(u, u)
 
-    # Normalize 'Of' → 'of'
-    if u:
-        u = re.sub(r"\bOf\b", "of", u.title())
-
-    # Canonical or fuzzy map
+    # Canonical list — try as-is first, then title-cased
     if u in CANON_UNIS:
         return u
-    match = _best_match(u, CANON_UNIS, cutoff=0.86)
+    u_title = re.sub(r"\bOf\b", "of", u.title())
+    if u_title in CANON_UNIS:
+        return u_title
+    match = _best_match(u, CANON_UNIS, cutoff=0.86) or _best_match(u_title, CANON_UNIS, cutoff=0.86)
     return match or u or "Unknown"
 
 
@@ -260,6 +264,35 @@ def _normalize_input(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _split_program_field(program_text: str) -> tuple[str, str]:
+    """
+    Split a "Program, University" string into its two parts.
+
+    applicant_data.json stores program as "Program Name, University Name "
+    (first comma separates program from university). Everything before the
+    first comma is the program; everything after is the university.
+
+    Falls back to the LLM only when no comma is present (genuinely ambiguous).
+    """
+    text = (program_text or "").strip()
+    if "," in text:
+        idx  = text.index(",")
+        prog = text[:idx].strip()
+        uni  = text[idx + 1:].strip()
+        return prog, uni
+    # No comma — can't split deterministically, signal LLM needed
+    return "", text
+
+
+
+    """Accept either a list of rows or {'rows': [...]}."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
+        return payload["rows"]
+    return []
+
+
 @app.get("/")
 def health() -> Any:
     """Simple liveness check."""
@@ -275,9 +308,16 @@ def standardize() -> Any:
     out: List[Dict[str, Any]] = []
     for row in rows:
         program_text = (row or {}).get("program") or ""
-        result = _call_llm(program_text)
-        row["llm-generated-program"] = result["standardized_program"]
-        row["llm-generated-university"] = result["standardized_university"]
+        prog, uni = _split_program_field(program_text)
+        if not prog:
+            result = _call_llm(program_text)
+            prog = result["standardized_program"]
+            uni  = result["standardized_university"]
+        else:
+            prog = _post_normalize_program(prog)
+            uni  = _post_normalize_university(uni)
+        row["llm-generated-program"]    = prog
+        row["llm-generated-university"] = uni
         out.append(row)
 
     return jsonify({"rows": out})
@@ -289,34 +329,52 @@ def _cli_process_file(
     append: bool,
     to_stdout: bool,
 ) -> None:
-    """Process a JSON file and write a valid JSON array incrementally.
+    """
+    Process applicant_data.json and add llm-generated-program /
+    llm-generated-university fields to every record.
 
-    Writes opening bracket, one row at a time (flushed after each), then
-    closing bracket — so the file is always valid JSON on completion even
-    though it is built incrementally.
+    Since applicant_data.json already stores program as "Program, University",
+    we split on the first comma deterministically for the vast majority of
+    records. The LLM is only called when no comma is present (rare edge case
+    where the scraper couldn't separate the two).
     """
     with open(in_path, "r", encoding="utf-8") as f:
         rows = _normalize_input(json.load(f))
 
     out_records: List[Dict[str, Any]] = []
+    llm_calls = 0
 
     for i, row in enumerate(rows):
         program_text = (row or {}).get("program") or ""
-        result = _call_llm(program_text)
-        row["llm-generated-program"] = result["standardized_program"]
-        row["llm-generated-university"] = result["standardized_university"]
+        prog, uni = _split_program_field(program_text)
+
+        if not prog:
+            # No comma — genuinely ambiguous, use LLM
+            result = _call_llm(program_text)
+            prog = result["standardized_program"]
+            uni  = result["standardized_university"]
+            llm_calls += 1
+        else:
+            # Already split — just post-normalize
+            prog = _post_normalize_program(prog)
+            uni  = _post_normalize_university(uni)
+
+        row["llm-generated-program"]    = prog
+        row["llm-generated-university"] = uni
         out_records.append(row)
 
-        # Progress heartbeat every 500 rows
         if (i + 1) % 500 == 0:
-            print(f"[llm] Processed {i + 1:,}/{len(rows):,} rows…", file=sys.stderr)
+            print(f"[llm] Processed {i + 1:,}/{len(rows):,} rows "
+                  f"({llm_calls} LLM calls so far)…", file=sys.stderr)
+
+    print(f"[llm] Done. {len(out_records):,} records, {llm_calls} LLM calls used.",
+          file=sys.stderr)
 
     if to_stdout:
         json.dump(out_records, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
     else:
         final_path = out_path or in_path.replace(".json", "_llm.json")
-        # Never append a JSON array file — always overwrite cleanly
         with open(final_path, "w", encoding="utf-8") as fh:
             json.dump(out_records, fh, ensure_ascii=False, indent=2)
         print(f"[llm] {len(out_records):,} records written to {final_path}.")

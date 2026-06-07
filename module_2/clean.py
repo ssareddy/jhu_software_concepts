@@ -349,16 +349,23 @@ def _clean_record(raw: dict) -> dict:
     tags     = segments[2] if len(segments) > 2 else ""   # full tags line
 
     # ---- program: "ProgramName, University" --------------------------------
-    # Strip degree-type suffix from col1 to get bare program name.
-    _DEGREE_SUFFIX = re.compile(
-        r"\s*(phd|ph\.d\.?|psyd|psy\.d\.?|edd|ed\.d\.?|doctoral|doctorate|"
-        r"masters?|m\.s\.?|m\.a\.?|mba|meng|m\.eng\.?|mfa|mpp|mpa|"
-        r"mph|msw|jd|llm|dma|ind|other)\s*$",
-        re.I,
-    )
-    program_name = _DEGREE_SUFFIX.sub("", col1).strip().strip(",").strip()
+    # col1 from the scraper is "Program · DegreeType" (middot-separated).
+    # Split on · first if present; otherwise fall back to stripping the degree
+    # keyword suffix (handles legacy "PhysicsPhD" concatenated format too).
+    if "·" in col1:
+        parts = [p.strip() for p in col1.split("·", 1)]
+        program_name = parts[0].strip(" ,·").strip()
+    else:
+        _DEGREE_SUFFIX = re.compile(
+            r"\s*(phd|ph\.d\.?|psyd|psy\.d\.?|edd|ed\.d\.?|doctoral|doctorate|"
+            r"masters?|m\.s\.?|m\.a\.?|mba|meng|m\.eng\.?|mfa|mpp|mpa|"
+            r"mph|msw|jd|llm|dma|ind|other)\s*$",
+            re.I,
+        )
+        program_name = _DEGREE_SUFFIX.sub("", col1).strip().strip(",·").strip()
+
     university   = _strip_html(raw.get("raw_institution_program", "")).strip()
-    # Combine as "Program, University" matching the professor's format.
+    # Combine as "Program, University" — no trailing space.
     if program_name and university:
         program_field = f"{program_name}, {university} "
     else:
@@ -367,7 +374,6 @@ def _clean_record(raw: dict) -> dict:
     # ---- comments ----------------------------------------------------------
     raw_notes   = raw.get("raw_notes", "")
     notes_clean = _strip_html(raw_notes).strip()
-    # Use empty string when no real content (bare status word or blank).
     status_only = re.fullmatch(
         r"\s*(accepted|rejected|waitlisted|wait\s*listed|interview(?:ed)?)\s*",
         notes_clean, re.I,
@@ -378,20 +384,20 @@ def _clean_record(raw: dict) -> dict:
     raw_date = raw.get("raw_date", "").strip()
     date_added = f"Added on {raw_date}" if raw_date else None
 
-    # ---- status: raw decision string from col 3 ----------------------------
+    # ---- status ------------------------------------------------------------
     status = decision.strip() or None
 
-    # ---- term: semester/year from tags line --------------------------------
+    # ---- term --------------------------------------------------------------
     term = _extract_semester_year(tags) or _extract_semester_year(notes_clean) or None
 
-    # ---- US/International from tags line -----------------------------------
+    # ---- US/International --------------------------------------------------
     us_intl = _extract_student_type(tags) or _extract_student_type(notes_clean) or None
 
-    # ---- GPA: raw string e.g. "GPA 3.88", omitted entirely when not found --
+    # ---- GPA: raw string e.g. "GPA 3.88", omitted when not found ----------
     gpa_val = _extract_gpa(tags) or _extract_gpa(notes_clean)
     gpa_str = f"GPA {gpa_val}" if gpa_val is not None else None
 
-    # ---- Degree: "PhD" or "Masters" ----------------------------------------
+    # ---- Degree ------------------------------------------------------------
     combined_text = " ".join(filter(None, [col1, tags, notes_clean]))
     degree = _normalize_degree(combined_text)
 
@@ -406,12 +412,11 @@ def _clean_record(raw: dict) -> dict:
         "Degree":           degree,
     }
 
-    # GPA is excluded entirely from the record when not present.
+    # GPA included only when present, matching sample_data.json format.
     if gpa_str is not None:
         record["GPA"] = gpa_str
 
     return record
-
 
 # ---------------------------------------------------------------------------
 # Public API

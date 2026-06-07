@@ -180,26 +180,49 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
     return None
 
 
-def _parse_entry(summary_row, detail_row) -> dict:
+def _safe_quit(driver: webdriver.Chrome, timeout: int = 8) -> None:
     """
-    Extract a single applicant record from a pair of <tr> tags.
+    Quit the Selenium driver without risking a hang.
 
-    GradCafe renders each result as TWO consecutive rows:
-      summary_row  — 4 columns: School | Program+DegreeType | Added On | Decision+URL
-      detail_row   — 1 wide column containing:
-                       • A tags/stats line:  "Accepted on May 15   Fall 2026   International   GPA 3.84"
-                       • (optionally) a free-text comment paragraph below it
+    driver.quit() can block indefinitely when Chrome is already in a bad
+    state (rate-limited, network stalled, crashed). This helper runs quit()
+    in a daemon thread so it cannot freeze the main process:
+      - If quit() finishes within `timeout` seconds — clean exit.
+      - If it times out, the thread is abandoned and we fall back to
+        force-killing the chromedriver subprocess via its PID.
+    """
+    import threading, signal, os
 
-    All required fields map as follows:
-      raw_institution_program  ← summary col 0  (school name)
-      raw_degree_status        ← summary col 1  (program name + degree type concatenated)
-      raw_date                 ← summary col 2  (date added to GradCafe, e.g. "May 29, 2026")
-      raw_decision             ← summary col 3  (short decision label, e.g. "Accepted on May 15")
-      url                      ← <a href> in summary col 3
-      raw_tags                 ← first text block in detail row
-                                 contains: decision date · semester/year · student type ·
-                                           GPA · GRE Q · GRE V · GRE AW
-      raw_notes                ← free-text comment in detail row (everything after the tags line)
+    def _quit():
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_quit, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+
+    if t.is_alive():
+        print(f"\n[scrape] driver.quit() hung after {timeout}s — force-killing Chrome.")
+        try:
+            pid = driver.service.process.pid
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+
+def _parse_entry(summary_row, tags_row, notes_row) -> dict:
+    """
+    Extract a single applicant record from consecutive <tr> tags.
+
+    GradCafe summary rows have 4 columns:
+      col 0: School name
+      col 1: Program · DegreeType  (e.g. "Physics · PhD")
+      col 2: Date added            (e.g. "Jun 06, 2026")
+      col 3: Decision label + URL  (e.g. "Rejected on Jun 02")
+
+    tags_row and notes_row follow immediately after the summary row.
     """
     # ---- summary row -------------------------------------------------------
     cells = summary_row.find_all("td")
@@ -208,20 +231,29 @@ def _parse_entry(summary_row, detail_row) -> dict:
 
     raw_institution_program = cells[0].get_text(separator=" ", strip=True)
 
-    # Col 1 merges program name and degree type, e.g. "Consumer ScienceMasters"
+    # Col 1: "Program · DegreeType" — keep combined for downstream splitting.
     raw_degree_status = cells[1].get_text(separator=" ", strip=True) if len(cells) > 1 else ""
 
-    # Col 2: date entry was added to GradCafe ("May 29, 2026")
+    # Col 2: date added to GradCafe
     raw_date = cells[2].get_text(separator=" ", strip=True) if len(cells) > 2 else ""
 
-    # Col 3: short decision label + link
+    # Col 3: decision label — strip UI noise like "Total comments", bell icons,
+    # comment counts, and any non-decision text that GradCafe injects.
     decision_cell = cells[3] if len(cells) > 3 else None
-    raw_decision = decision_cell.get_text(separator=" ", strip=True) if decision_cell else ""
+    raw_decision  = ""
+    if decision_cell:
+        # The actual decision is always in an <a> or <span> with the result link
+        # or a status badge. Grab only text that matches a decision pattern.
+        full_text = decision_cell.get_text(separator=" ", strip=True)
+        # Match "Accepted/Rejected/Waitlisted/Interview [on <date>]"
+        m = re.search(
+            r"(accepted|rejected|waitlisted|wait\s*listed|interview\w*)"
+            r"(\s+on\s+[A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)?",
+            full_text, re.I,
+        )
+        raw_decision = m.group(0).strip() if m else full_text
 
-    # URL to individual result page.
-    # Search the entire summary row for any /result/ link — the anchor can
-    # appear on the school name, the decision text, or elsewhere depending
-    # on GradCafe's current markup.
+    # URL: search entire summary row for any /result/ href.
     url = ""
     for a_tag in summary_row.find_all("a", href=True):
         href = a_tag["href"]
@@ -229,54 +261,24 @@ def _parse_entry(summary_row, detail_row) -> dict:
             url = href if href.startswith("http") else urllib.parse.urljoin(BASE_URL, href)
             break
 
-    # ---- detail row --------------------------------------------------------
-    # The detail row holds structured tag tokens AND the free-text comment.
-    # Both live in the same <td>. The tag tokens match known patterns:
-    #   season   — "Fall 2026", "Spring 2025", etc.
-    #   status   — "American", "International"
-    #   GPA      — "GPA 3.84"
-    #   GRE      — "GRE 320", "GRE V 165", "GRE AW 4.0"
-    #   decision — "Accepted on May 15", "Rejected on Jun 02"
-    # Everything that does NOT match any tag pattern is free-text notes.
-    _TAG_RE = re.compile(
-        r"^("
-        r"(fall|spring|summer|winter)\s+\d{4}"           # season
-        r"|american|international|domestic"               # student type
-        r"|gpa\s*[\d.]+"                                  # GPA token
-        r"|gre(\s+(v(erbal)?|q(uant)?|aw|writing))?\s*[\d.]+"  # GRE token
-        r"|(accepted|rejected|waitlisted|interview\w*)"   # decision word
-        r"(\s+on\s+.*)?"                                  # optional "on <date>"
-        r")$",
-        re.I,
-    )
-
+    # ---- tags row (1 cell) -------------------------------------------------
+    # Row 1: structured tokens — "Rejected on Jun 02§Fall 2026§American"
     raw_tags = ""
+    if tags_row is not None:
+        tags_td = tags_row.find("td")
+        if tags_td:
+            raw_tags = tags_td.get_text(separator="   ", strip=True)
+
+    # ---- notes row (1 cell) ------------------------------------------------
+    # Row 2: free-text applicant comment — entirely separate row.
     raw_notes = ""
+    if notes_row is not None:
+        notes_td = notes_row.find("td")
+        if notes_td:
+            raw_notes = notes_td.get_text(separator=" ", strip=True)
 
-    if detail_row is not None:
-        detail_td = detail_row.find("td")
-        if detail_td:
-            # Gather all text from the cell, splitting on whitespace runs of 3+
-            # chars OR newlines — these are the natural token boundaries GradCafe uses.
-            full_text = detail_td.get_text(separator="\n", strip=True)
-            all_tokens = [
-                t.strip()
-                for t in re.split(r"\n+|\s{3,}", full_text)
-                if t.strip()
-            ]
-
-            tag_tokens, note_tokens = [], []
-            for token in all_tokens:
-                if _TAG_RE.match(token):
-                    tag_tokens.append(token)
-                else:
-                    note_tokens.append(token)
-
-            raw_tags  = "   ".join(tag_tokens)
-            raw_notes = " ".join(note_tokens).strip()
-
-    # Merge decision label + tags into a single string that clean.py can mine
-    # for: decision date, semester, student type, GPA, GRE scores.
+    # Merge decision label + tags into a single pipe-joined string that
+    # clean.py mines for: decision date, semester, student type, GPA, GRE.
     raw_degree_status_full = " | ".join(
         filter(None, [raw_degree_status, raw_decision, raw_tags])
     )
@@ -294,66 +296,71 @@ def _parse_page(html: str) -> list[dict]:
     """
     Parse all applicant rows from a rendered Grad Cafe HTML page.
 
-    GradCafe's survey table alternates between summary rows and detail rows.
-    The page contains a single <table>; rows come in pairs:
-      odd  → summary  (School / Program / Added On / Decision)
-      even → detail   (tags line + free-text comment)
+    GradCafe renders each result as THREE consecutive <tr> rows:
+      Row 0 (5 cells) — summary: School | Program | DegreeType | Added On | Decision
+      Row 1 (1 cell)  — tags:    "Rejected on Jun 02   Fall 2026   American"
+      Row 2 (1 cell)  — notes:   free-text applicant comment (may be absent)
 
     Strategy:
-      1. Locate the results table (any <table> containing result links).
-      2. Collect all <tr> children, skipping the header.
-      3. Walk pairs: (summary_row, detail_row) → _parse_entry().
+      1. Find the results table (contains /result/ links).
+      2. Drop header rows (those with <th>).
+      3. Walk rows: identify summary rows by cell count (≥3) + /result/ link.
+         Consume the next 1-2 single-cell rows as tags and notes respectively.
     """
     soup = BeautifulSoup(html, "html.parser")
     records: list[dict] = []
 
-    # Find the table that contains result links (/result/ paths)
+    # Find the table containing result links
     result_table = None
     for table in soup.find_all("table"):
         if table.find("a", href=re.compile(r"/result/", re.I)):
             result_table = table
             break
-
-    # Fallback: any table on the page
     if result_table is None:
         result_table = soup.find("table")
-
     if result_table is None:
         return records
 
-    # Collect all <tr> rows, skip the header row (first <tr> or <thead> rows)
-    all_rows = result_table.find_all("tr")
+    # Drop header rows
+    data_rows = [r for r in result_table.find_all("tr") if not r.find("th")]
 
-    # Drop header rows (those that contain <th> elements)
-    data_rows = [r for r in all_rows if not r.find("th")]
-
-    # Walk in pairs: summary row followed immediately by its detail row
     i = 0
     while i < len(data_rows):
-        summary = data_rows[i]
-
-        # A summary row has ≥3 <td> cells and a result link
+        row = data_rows[i]
+        n_cells = len(row.find_all("td"))
         is_summary = (
-            len(summary.find_all("td")) >= 3
-            and summary.find("a", href=re.compile(r"/result/", re.I))
+            n_cells >= 3
+            and row.find("a", href=re.compile(r"/result/", re.I))
         )
 
-        if is_summary:
-            # The very next row is the detail row (may or may not exist)
-            detail = data_rows[i + 1] if (i + 1) < len(data_rows) else None
+        if not is_summary:
+            i += 1
+            continue
 
-            # Confirm the next row is actually a detail row (few or 1 <td>)
-            if detail is not None and len(detail.find_all("td")) >= 3:
-                # Next row looks like another summary — no detail row present
-                detail = None
-            else:
-                i += 1  # consume the detail row
+        # Peek at the next two rows to find tags and notes rows.
+        # A tags/notes row has exactly 1 <td> and no /result/ link.
+        def _is_detail(r):
+            return (
+                r is not None
+                and len(r.find_all("td")) == 1
+                and not r.find("a", href=re.compile(r"/result/", re.I))
+            )
 
-            entry = _parse_entry(summary, detail)
-            if entry:
-                records.append(entry)
+        tags_row  = data_rows[i + 1] if (i + 1) < len(data_rows) and _is_detail(data_rows[i + 1]) else None
+        notes_row = data_rows[i + 2] if (i + 2) < len(data_rows) and _is_detail(data_rows[i + 2]) else None
 
-        i += 1
+        # Only consume rows that are actually detail rows
+        consumed = 1
+        if tags_row is not None:
+            consumed += 1
+        if notes_row is not None:
+            consumed += 1
+
+        entry = _parse_entry(row, tags_row, notes_row)
+        if entry:
+            records.append(entry)
+
+        i += consumed
 
     return records
 
@@ -476,10 +483,8 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
                       f"page {page_num} with a fresh browser session...")
 
                 # Tear down the poisoned session before sleeping.
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
+                # Use _safe_quit so a hanging Chrome can't block the countdown.
+                _safe_quit(driver)
 
                 # Count down so the console shows the scrape is still alive.
                 remaining = RATE_LIMIT_PAUSE
@@ -512,7 +517,7 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
             page_num += 1  # only advance on success
 
     finally:
-        driver.quit()
+        _safe_quit(driver)
 
     _save_raw(all_records, output_file)
     print(f"[scrape] Done. {len(all_records):,} raw records saved to {output_file}.")
@@ -531,6 +536,7 @@ def _save_raw(records: list[dict], path: Path) -> None:
 
 if __name__ == "__main__":
     import sys
+
     # Automatically resumes from where the last run stopped.
     # Optionally pass a page number to override: python scrape.py 101
     start = int(sys.argv[1]) if len(sys.argv) > 1 else _get_resume_page(RAW_FILE)
