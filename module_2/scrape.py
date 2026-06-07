@@ -180,71 +180,91 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
 # HTML parsing helpers (BeautifulSoup + regex + string methods)
 # ---------------------------------------------------------------------------
 
-def _parse_entry(row) -> dict:
+def _parse_entry(summary_row, detail_row) -> dict:
     """
-    Extract a single applicant record from a <tr> BeautifulSoup Tag.
-    Captures all fields required by the assignment. Returns a dict of
-    raw (unparsed) field strings for downstream cleaning in clean.py.
+    Extract a single applicant record from a pair of <tr> tags.
 
-    Required fields captured here:
-      - Program Name / University  → raw_institution_program
-      - Comments                   → raw_notes
-      - Date Added to Grad Cafe    → raw_date
-      - URL link to entry          → url
-      - Applicant Status           → raw_degree_status
-      - Acceptance / Rejection Date (within raw_degree_status)
-      - Semester / Year            (within raw_institution_program / raw_notes)
-      - International / American   (within raw_notes)
-      - GRE, GRE V, GPA, GRE AW   (within raw_notes)
-      - Masters or PhD             (within raw_degree_status)
+    GradCafe renders each result as TWO consecutive rows:
+      summary_row  — 4 columns: School | Program+DegreeType | Added On | Decision+URL
+      detail_row   — 1 wide column containing:
+                       • A tags/stats line:  "Accepted on May 15   Fall 2026   International   GPA 3.84"
+                       • (optionally) a free-text comment paragraph below it
+
+    All required fields map as follows:
+      raw_institution_program  ← summary col 0  (school name)
+      raw_degree_status        ← summary col 1  (program name + degree type concatenated)
+      raw_date                 ← summary col 2  (date added to GradCafe, e.g. "May 29, 2026")
+      raw_decision             ← summary col 3  (short decision label, e.g. "Accepted on May 15")
+      url                      ← <a href> in summary col 3
+      raw_tags                 ← first text block in detail row
+                                 contains: decision date · semester/year · student type ·
+                                           GPA · GRE Q · GRE V · GRE AW
+      raw_notes                ← free-text comment in detail row (everything after the tags line)
     """
-    cells = row.find_all("td")
-    if len(cells) < 4:
+    # ---- summary row -------------------------------------------------------
+    cells = summary_row.find_all("td")
+    if len(cells) < 3:
         return {}
 
-    # Cell 0: institution and program name
     raw_institution_program = cells[0].get_text(separator=" ", strip=True)
 
-    # Cell 1: degree type and applicant status (includes acceptance/rejection date)
+    # Col 1 merges program name and degree type, e.g. "Consumer ScienceMasters"
     raw_degree_status = cells[1].get_text(separator=" ", strip=True) if len(cells) > 1 else ""
 
-    # Cell 2: date the entry was added to Grad Cafe
+    # Col 2: date entry was added to GradCafe ("May 29, 2026")
     raw_date = cells[2].get_text(separator=" ", strip=True) if len(cells) > 2 else ""
 
-    # Cell 3: applicant notes — contains GPA, GRE scores, comments,
-    #         student type (International/American), semester/year
-    raw_notes = cells[3].get_text(separator=" ", strip=True) if len(cells) > 3 else ""
+    # Col 3: short decision label + link
+    decision_cell = cells[3] if len(cells) > 3 else None
+    raw_decision = decision_cell.get_text(separator=" ", strip=True) if decision_cell else ""
 
-    # Some entries have additional cells or a sibling row containing tags
-    # such as semester, student type, and GPA (e.g. "Fall 2026", "International", "GPA 3.40").
-    # Collect all extra cell text and the next sibling row text into raw_tags.
-    extra_parts = []
-    for cell in cells[4:]:
-        text = cell.get_text(separator=" ", strip=True)
-        if text:
-            extra_parts.append(text)
-
-    # Check the next sibling row for tag-style data
-    next_row = row.find_next_sibling("tr")
-    if next_row:
-        next_text = next_row.get_text(separator=" ", strip=True)
-        if next_text:
-            extra_parts.append(next_text)
-
-    # Merge extra tag data into raw_notes so clean.py extractors can find it
-    if extra_parts:
-        raw_notes = (raw_notes + " " + " ".join(extra_parts)).strip()
-
-    # URL link to the individual applicant entry
-    link_tag = row.find("a", href=True)
+    # URL to individual result page
     url = ""
+    link_tag = (decision_cell or summary_row).find("a", href=True)
     if link_tag:
         href = link_tag["href"]
         url = href if href.startswith("http") else urllib.parse.urljoin(BASE_URL, href)
 
+    # ---- detail row --------------------------------------------------------
+    # The detail row holds ALL structured stats and the free-text comment.
+    # Text content looks like (newline-separated blocks):
+    #   "Accepted on May 15   Fall 2026   International   GPA 3.84"
+    #   "I was really surprised! The email was sent at 10 p.m. ..."
+    raw_tags = ""
+    raw_notes = ""
+
+    if detail_row is not None:
+        # Collect all text nodes / inline elements, preserving paragraph breaks
+        detail_td = detail_row.find("td")
+        if detail_td:
+            # Each logical block is usually a <p>, <div>, or <span>; fall back
+            # to splitting on double-whitespace if the markup is flat.
+            blocks = []
+            for tag in detail_td.find_all(["p", "div", "span"], recursive=False):
+                t = tag.get_text(separator=" ", strip=True)
+                if t:
+                    blocks.append(t)
+
+            if not blocks:
+                # Flat text fallback: split on 3+ spaces or newlines
+                full = detail_td.get_text(separator="\n", strip=True)
+                blocks = [b.strip() for b in re.split(r"\n{2,}|\s{3,}", full) if b.strip()]
+
+            if blocks:
+                # The FIRST block is always the stats/tags line.
+                raw_tags = blocks[0]
+                # Everything after is the applicant's free-text comment.
+                raw_notes = " ".join(blocks[1:]).strip()
+
+    # Merge decision label + tags into a single string that clean.py can mine
+    # for: decision date, semester, student type, GPA, GRE scores.
+    raw_degree_status_full = " | ".join(
+        filter(None, [raw_degree_status, raw_decision, raw_tags])
+    )
+
     return {
         "raw_institution_program": raw_institution_program,
-        "raw_degree_status":       raw_degree_status,
+        "raw_degree_status":       raw_degree_status_full,
         "raw_date":                raw_date,
         "raw_notes":               raw_notes,
         "url":                     url,
@@ -254,24 +274,67 @@ def _parse_entry(row) -> dict:
 def _parse_page(html: str) -> list[dict]:
     """
     Parse all applicant rows from a rendered Grad Cafe HTML page.
-    Uses BeautifulSoup for DOM traversal plus string/regex fallbacks.
+
+    GradCafe's survey table alternates between summary rows and detail rows.
+    The page contains a single <table>; rows come in pairs:
+      odd  → summary  (School / Program / Added On / Decision)
+      even → detail   (tags line + free-text comment)
+
+    Strategy:
+      1. Locate the results table (any <table> containing result links).
+      2. Collect all <tr> children, skipping the header.
+      3. Walk pairs: (summary_row, detail_row) → _parse_entry().
     """
     soup = BeautifulSoup(html, "html.parser")
     records: list[dict] = []
 
-    # Primary: find a results table
-    result_table = soup.find("table", class_=re.compile(r"results|survey", re.I))
-    if not result_table:
+    # Find the table that contains result links (/result/ paths)
+    result_table = None
+    for table in soup.find_all("table"):
+        if table.find("a", href=re.compile(r"/result/", re.I)):
+            result_table = table
+            break
+
+    # Fallback: any table on the page
+    if result_table is None:
         result_table = soup.find("table")
 
-    if result_table:
-        rows = result_table.find_all("tr", class_=re.compile(r"^r[01]$|row", re.I))
-        if not rows:
-            rows = result_table.find_all("tr")[1:]  # skip header row
-        for row in rows:
-            entry = _parse_entry(row)
+    if result_table is None:
+        return records
+
+    # Collect all <tr> rows, skip the header row (first <tr> or <thead> rows)
+    all_rows = result_table.find_all("tr")
+
+    # Drop header rows (those that contain <th> elements)
+    data_rows = [r for r in all_rows if not r.find("th")]
+
+    # Walk in pairs: summary row followed immediately by its detail row
+    i = 0
+    while i < len(data_rows):
+        summary = data_rows[i]
+
+        # A summary row has ≥3 <td> cells and a result link
+        is_summary = (
+            len(summary.find_all("td")) >= 3
+            and summary.find("a", href=re.compile(r"/result/", re.I))
+        )
+
+        if is_summary:
+            # The very next row is the detail row (may or may not exist)
+            detail = data_rows[i + 1] if (i + 1) < len(data_rows) else None
+
+            # Confirm the next row is actually a detail row (few or 1 <td>)
+            if detail is not None and len(detail.find_all("td")) >= 3:
+                # Next row looks like another summary — no detail row present
+                detail = None
+            else:
+                i += 1  # consume the detail row
+
+            entry = _parse_entry(summary, detail)
             if entry:
                 records.append(entry)
+
+        i += 1
 
     return records
 

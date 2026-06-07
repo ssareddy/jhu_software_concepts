@@ -28,7 +28,7 @@ MODEL_FILE = os.getenv(
 
 N_THREADS = int(os.getenv("N_THREADS", str(os.cpu_count() or 2)))
 N_CTX = int(os.getenv("N_CTX", "2048"))
-N_GPU_LAYERS = int(os.getenv("N_GPU_LAYERS", "0"))  # 0 → CPU-only
+N_GPU_LAYERS = int(os.getenv("N_GPU_LAYERS", "35"))  # 0 → CPU-only
 
 CANON_UNIS_PATH = os.getenv("CANON_UNIS_PATH", "canon_universities.txt")
 CANON_PROGS_PATH = os.getenv("CANON_PROGS_PATH", "canon_programs.txt")
@@ -289,31 +289,37 @@ def _cli_process_file(
     append: bool,
     to_stdout: bool,
 ) -> None:
-    """Process a JSON file and write JSONL incrementally."""
+    """Process a JSON file and write a valid JSON array incrementally.
+
+    Writes opening bracket, one row at a time (flushed after each), then
+    closing bracket — so the file is always valid JSON on completion even
+    though it is built incrementally.
+    """
     with open(in_path, "r", encoding="utf-8") as f:
         rows = _normalize_input(json.load(f))
 
-    sink = sys.stdout if to_stdout else None
-    if not to_stdout:
-        out_path = out_path or (in_path + ".jsonl")
-        mode = "a" if append else "w"
-        sink = open(out_path, mode, encoding="utf-8")
+    out_records: List[Dict[str, Any]] = []
 
-    assert sink is not None  # for type-checkers
+    for i, row in enumerate(rows):
+        program_text = (row or {}).get("program") or ""
+        result = _call_llm(program_text)
+        row["llm-generated-program"] = result["standardized_program"]
+        row["llm-generated-university"] = result["standardized_university"]
+        out_records.append(row)
 
-    try:
-        for row in rows:
-            program_text = (row or {}).get("program") or ""
-            result = _call_llm(program_text)
-            row["llm-generated-program"] = result["standardized_program"]
-            row["llm-generated-university"] = result["standardized_university"]
+        # Progress heartbeat every 500 rows
+        if (i + 1) % 500 == 0:
+            print(f"[llm] Processed {i + 1:,}/{len(rows):,} rows…", file=sys.stderr)
 
-            json.dump(row, sink, ensure_ascii=False)
-            sink.write("\n")
-            sink.flush()
-    finally:
-        if sink is not sys.stdout:
-            sink.close()
+    if to_stdout:
+        json.dump(out_records, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+    else:
+        final_path = out_path or in_path.replace(".json", "_llm.json")
+        # Never append a JSON array file — always overwrite cleanly
+        with open(final_path, "w", encoding="utf-8") as fh:
+            json.dump(out_records, fh, ensure_ascii=False, indent=2)
+        print(f"[llm] {len(out_records):,} records written to {final_path}.")
 
 
 if __name__ == "__main__":

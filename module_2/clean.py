@@ -225,6 +225,64 @@ def _extract_date(text: str) -> str | None:
     return None
 
 
+def _extract_decision_date(raw_notes: str, raw_date: str) -> str | None:
+    """
+    Extract the actual decision date, preferring a date embedded in the
+    status note (e.g. 'Accepted on Apr 17', 'Rejected via email on Mar 3 2024')
+    over the raw_date field, which often reflects the post submission date
+    rather than the actual decision date.
+
+    Falls back to raw_date only when no date can be found in the notes.
+    """
+    months = {
+        "january": 1, "february": 2, "march": 3, "april": 4,
+        "may": 5, "june": 6, "july": 7, "august": 8,
+        "september": 9, "october": 10, "november": 11, "december": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+        "jun": 6, "jul": 7, "aug": 8,
+        "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+
+    # Look for status-keyed date phrases in notes:
+    # "Accepted on Apr 17", "Rejected via email Mar 3, 2024", "Interviewed on 2024-02-01"
+    status_date_pattern = re.compile(
+        r"(?:accepted|rejected|waitlisted|interview(?:ed)?)"
+        r"(?:\s+(?:on|via\s+\S+\s+on?|via\s+\S+))?"
+        r"\s+"
+        r"("
+        r"\d{4}-\d{1,2}-\d{1,2}"                        # ISO
+        r"|[A-Za-z]+\s+\d{1,2}(?:,\s*\d{4})?"           # Month Day or Month Day, Year
+        r"|\d{1,2}/\d{1,2}/\d{4}"                        # MM/DD/YYYY
+        r")",
+        re.I,
+    )
+
+    m = status_date_pattern.search(raw_notes)
+    if m:
+        candidate = m.group(1).strip()
+
+        # ISO
+        iso = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", candidate)
+        if iso:
+            return f"{iso.group(1)}-{int(iso.group(2)):02d}-{int(iso.group(3)):02d}"
+
+        # MM/DD/YYYY
+        mdy = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", candidate)
+        if mdy:
+            return f"{mdy.group(3)}-{int(mdy.group(1)):02d}-{int(mdy.group(2)):02d}"
+
+        # Month Day, Year  or  Month Day  (infer current year as fallback)
+        mdn = re.match(r"([A-Za-z]+)\s+(\d{1,2})(?:,\s*(\d{4}))?", candidate)
+        if mdn:
+            month_str = mdn.group(1).lower()
+            if month_str in months:
+                year = mdn.group(3) or str(__import__("datetime").date.today().year)
+                return f"{year}-{months[month_str]:02d}-{int(mdn.group(2)):02d}"
+
+    # Fallback: parse raw_date as-is
+    return _extract_date(raw_date)
+
+
 def _extract_student_type(text: str) -> str | None:
     """Detect domestic/international student status."""
     lower = text.lower()
@@ -272,43 +330,58 @@ def _clean_record(raw: dict) -> dict:
         raw.get("raw_notes", ""),
     ]))
 
-    university, program_name = _split_institution_program(
-        raw.get("raw_institution_program", "")
-    )
+    # University is col 0 of the scraper output (school name only).
+    university = _strip_html(raw.get("raw_institution_program", "")).strip() or None
 
-    # If program_name not found in institution field, check raw_degree_status.
-    # Grad Cafe sometimes puts the program name there (e.g. "Clinical Psychology PsyD").
-    if not program_name:
-        degree_status = raw.get("raw_degree_status", "")
-        # Strip the degree type keywords to isolate the program name
-        program_name = re.sub(
-            r"(phd|ph\.d|psyd|psy\.d|edd|ed\.d|doctoral|doctorate|"
-            r"masters?|ms|m\.s|ma|m\.a|mba|meng|m\.eng|mfa|mpp|mpa|"
-            r"mph|msw|jd|llm|dma)",
-            "", degree_status, flags=re.I
-        ).strip().strip(",").strip() or None
+    # raw_degree_status is pipe-joined: "ProgramDegreeType | decision | tags..."
+    # Only col-1 text (before first " | ") holds program+degree type.
+    degree_status_col1 = raw.get("raw_degree_status", "").split(" | ")[0].strip()
+
+    # Strip degree-type suffix from the end to isolate the program name.
+    _DEGREE_SUFFIX = re.compile(
+        r"\s*(phd|ph\.d\.?|psyd|psy\.d\.?|edd|ed\.d\.?|doctoral|doctorate|"
+        r"masters?|m\.s\.?|m\.a\.?|mba|meng|m\.eng\.?|mfa|mpp|mpa|"
+        r"mph|msw|jd|llm|dma|ind|other)\s*$",
+        re.I,
+    )
+    program_name = _DEGREE_SUFFIX.sub("", degree_status_col1).strip().strip(",").strip() or None
+
+    raw_notes  = raw.get("raw_notes", "")
+    raw_date   = raw.get("raw_date", "")
+
+    # Extract GRE once to avoid repeated regex passes
+    gre = _extract_gre(combined_text)
+
+    # comments: strip status-only phrases so the field carries real content.
+    # Keep the full notes text; if it collapses to just a status word, set None.
+    notes_clean = _strip_html(raw_notes)
+    status_only = re.fullmatch(
+        r"\s*(accepted|rejected|waitlisted|interview(?:ed)?)\s*",
+        notes_clean, re.I,
+    )
+    comments = None if (not notes_clean or status_only) else notes_clean
 
     return {
-        "program_name":            program_name,
+        "program":                 program_name,
         "university":              university,
         "degree_type":             _normalize_degree(combined_text),
         "status":                  _normalize_status(combined_text),
-        "decision_date":           _extract_date(raw.get("raw_date", "")),
+        "decision_date":           _extract_decision_date(raw_notes, raw_date),
         "semester_year":           _extract_semester_year(combined_text),
         "student_type":            _extract_student_type(combined_text),
         "gpa":                     _extract_gpa(combined_text),
-        "gre_total":               _extract_gre(combined_text)["gre_total"],
-        "gre_verbal":              _extract_gre(combined_text)["gre_verbal"],
-        "gre_quant":               _extract_gre(combined_text)["gre_quant"],
-        "gre_aw":                  _extract_gre(combined_text)["gre_aw"],
-        "comments":                _strip_html(raw.get("raw_notes", "")) or None,
-        "date_added":              _extract_date(raw.get("raw_date", "")),
+        "gre_total":               gre["gre_total"],
+        "gre_verbal":              gre["gre_verbal"],
+        "gre_quant":               gre["gre_quant"],
+        "gre_aw":                  gre["gre_aw"],
+        "comments":                comments,
+        "date_added":              _extract_date(raw_date),
         "url":                     raw.get("url") or None,
         # Preserved raw fields for traceability
         "raw_institution_program": raw.get("raw_institution_program", ""),
         "raw_degree_status":       raw.get("raw_degree_status", ""),
-        "raw_date":                raw.get("raw_date", ""),
-        "raw_notes":               _strip_html(raw.get("raw_notes", "")),
+        "raw_date":                raw_date,
+        "raw_notes":               notes_clean,
     }
 
 
