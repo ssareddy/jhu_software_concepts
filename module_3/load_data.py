@@ -2,30 +2,31 @@
 load_data.py
 ------------
 Connects to a PostgreSQL database and loads cleaned Grad Café applicant data
-from a CSV file (produced in Module 2) into an `applicants` table.
+from a JSON file into an `applicants` table.
 
 Usage:
-    python load_data.py --csv <path_to_csv>
+    python load_data.py --json <path_to_json>
 
-Environment variables (or edit DB_CONFIG below):
-    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+Edit DB_CONFIG below to match your PostgreSQL setup before running.
+If DB_PASSWORD is left blank, you will be prompted to enter it at runtime.
 """
 
 import os
 import json
 import argparse
+import getpass
 import psycopg2
 from psycopg2 import extras
 
 # ---------------------------------------------------------------------------
-# Database connection config — override via environment variables or edit here
+# Database connection config — edit these values to match your setup
 # ---------------------------------------------------------------------------
 DB_CONFIG = {
     "host":     "localhost",
     "port":     5432,
-    "dbname":   "gradcafe",   # whatever you named your database
-    "user":     "postgres",   # your PostgreSQL username
-    "password": "banu1998",  # your PostgreSQL password
+    "dbname":   "gradcafe",
+    "user":     "postgres",
+    "password": "",          # Leave blank to be prompted at runtime
 }
 
 CREATE_TABLE_SQL = """
@@ -73,7 +74,12 @@ def parse_date(val):
 
 
 def get_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    config = DB_CONFIG.copy()
+    if not config["password"]:
+        config["password"] = getpass.getpass(
+            f"Enter PostgreSQL password for user '{config['user']}': "
+        )
+    return psycopg2.connect(**config)
 
 
 def create_table(conn):
@@ -124,8 +130,13 @@ def load_json(conn, json_path: str):
 
 
 def main():
+    default_json = os.path.join(os.path.dirname(__file__), "llm_extend_applicant_data.json")
     parser = argparse.ArgumentParser(description="Load Grad Café data into PostgreSQL.")
-    parser.add_argument("--json", required=True, help="Path to cleaned JSON file from Module 2.")
+    parser.add_argument(
+        "--json",
+        default=default_json,
+        help="Path to cleaned JSON file (default: llm_extend_applicant_data.json in module_3/)."
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.json):

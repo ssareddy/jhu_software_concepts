@@ -412,7 +412,7 @@ def _write_resume_marker(records: list[dict], next_page: int, path: Path) -> Non
 def _load_existing_records(output_file: Path) -> list[dict]:
     """Load existing records from raw_results.json, handling both
     plain list format and the resume-marker dict format."""
-    if not output_file.exists():
+    if output_file is None or not output_file.exists():
         return []
     try:
         with open(output_file, encoding="utf-8") as fh:
@@ -477,7 +477,8 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
                 print(f"[scrape] Page {page_num}: {reason}.")
 
                 # Save progress so data is safe during the pause.
-                _write_resume_marker(all_records, page_num, output_file)
+                if output_file is not None:
+                    _write_resume_marker(all_records, page_num, output_file)
                 print(f"[scrape] {len(all_records):,} records saved. "
                       f"Pausing {RATE_LIMIT_PAUSE // 60} minutes before retrying "
                       f"page {page_num} with a fresh browser session...")
@@ -509,8 +510,8 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
             print(f"[scrape] Page {page_num}: {len(records)} records "
                   f"(total: {len(all_records):,})")
 
-            # Incremental checkpoint every 50 pages
-            if page_num % 50 == 0:
+            # Incremental checkpoint every 50 pages (only if saving to file)
+            if output_file is not None and page_num % 50 == 0:
                 _save_raw(all_records, output_file)
                 print(f"[scrape] Checkpoint saved ({len(all_records):,} records).")
 
