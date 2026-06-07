@@ -12,10 +12,10 @@ Environment variables (or edit DB_CONFIG below):
 """
 
 import os
-import csv
+import json
 import argparse
 import psycopg2
-from psycopg2 import sql, extras
+from psycopg2 import extras
 
 # ---------------------------------------------------------------------------
 # Database connection config — override via environment variables or edit here
@@ -25,7 +25,7 @@ DB_CONFIG = {
     "port":     5432,
     "dbname":   "gradcafe",   # whatever you named your database
     "user":     "postgres",   # your PostgreSQL username
-    "password": "yourpassword",  # your PostgreSQL password
+    "password": "banu1998",  # your PostgreSQL password
 }
 
 CREATE_TABLE_SQL = """
@@ -83,36 +83,37 @@ def create_table(conn):
     print("✓ Table `applicants` ready.")
 
 
-def load_csv(conn, csv_path: str):
+def load_json(conn, json_path: str):
     rows = []
     skipped = 0
 
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                rows.append((
-                    row.get("program"),
-                    row.get("comments"),
-                    parse_date(row.get("date_added")),
-                    row.get("url"),
-                    row.get("status"),
-                    row.get("term"),
-                    row.get("us_or_international"),
-                    parse_float(row.get("gpa")),
-                    parse_float(row.get("gre")),
-                    parse_float(row.get("gre_v")),
-                    parse_float(row.get("gre_aw")),
-                    row.get("degree"),
-                    row.get("llm_generated_program"),
-                    row.get("llm_generated_university"),
-                ))
-            except Exception as e:
-                skipped += 1
-                print(f"  ⚠ Skipping row due to error: {e}")
+    with open(json_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    for row in data:
+        try:
+            rows.append((
+                row.get("program"),
+                row.get("comments"),
+                parse_date(row.get("date_added")),
+                row.get("url"),
+                row.get("status"),
+                row.get("term"),
+                row.get("US/International"),
+                parse_float(row.get("GPA")),
+                parse_float(row.get("GRE")),
+                parse_float(row.get("GRE V")),
+                parse_float(row.get("GRE AW")),
+                row.get("Degree"),
+                row.get("llm-generated-program"),
+                row.get("llm-generated-university"),
+            ))
+        except Exception as e:
+            skipped += 1
+            print(f"  ⚠ Skipping row due to error: {e}")
 
     if not rows:
-        print("No valid rows found in CSV. Exiting.")
+        print("No valid rows found in JSON. Exiting.")
         return
 
     with conn.cursor() as cur:
@@ -124,11 +125,11 @@ def load_csv(conn, csv_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Load Grad Café data into PostgreSQL.")
-    parser.add_argument("--csv", required=True, help="Path to cleaned CSV file from Module 2.")
+    parser.add_argument("--json", required=True, help="Path to cleaned JSON file from Module 2.")
     args = parser.parse_args()
 
-    if not os.path.exists(args.csv):
-        print(f"Error: CSV file not found: {args.csv}")
+    if not os.path.exists(args.json):
+        print(f"Error: JSON file not found: {args.json}")
         return
 
     try:
@@ -140,7 +141,7 @@ def main():
 
     try:
         create_table(conn)
-        load_csv(conn, args.csv)
+        load_json(conn, args.json)
     finally:
         conn.close()
         print("✓ Connection closed.")

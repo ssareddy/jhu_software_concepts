@@ -19,7 +19,7 @@ DB_CONFIG = {
     "port":     5432,
     "dbname":   "gradcafe",   # whatever you named your database
     "user":     "postgres",   # your PostgreSQL username
-    "password": "yourpassword",  # your PostgreSQL password
+    "password": "banu1998",  # your PostgreSQL password
 }
 
 
@@ -78,9 +78,9 @@ def run_queries():
     cur.execute("""
         SELECT
             ROUND(AVG(gpa)::numeric,   2) AS avg_gpa,
-            ROUND(AVG(gre)::numeric,   2) AS avg_gre,
-            ROUND(AVG(gre_v)::numeric, 2) AS avg_gre_v,
-            ROUND(AVG(gre_aw)::numeric,2) AS avg_gre_aw
+            ROUND(AVG(CASE WHEN gre BETWEEN 130 AND 170 THEN gre END)::numeric,   2) AS avg_gre,
+            ROUND(AVG(CASE WHEN gre_v BETWEEN 130 AND 170 THEN gre_v END)::numeric, 2) AS avg_gre_v,
+            ROUND(AVG(CASE WHEN gre_aw BETWEEN 0 AND 6 THEN gre_aw END)::numeric,2) AS avg_gre_aw
         FROM applicants
         WHERE gpa IS NOT NULL
            OR gre IS NOT NULL
@@ -295,9 +295,9 @@ def get_all_results():
     cur.execute("""
         SELECT
             ROUND(AVG(gpa)::numeric,   2),
-            ROUND(AVG(gre)::numeric,   2),
-            ROUND(AVG(gre_v)::numeric, 2),
-            ROUND(AVG(gre_aw)::numeric,2)
+            ROUND(AVG(CASE WHEN gre BETWEEN 130 AND 170 THEN gre END)::numeric,   2),
+            ROUND(AVG(CASE WHEN gre_v BETWEEN 130 AND 170 THEN gre_v END)::numeric, 2),
+            ROUND(AVG(CASE WHEN gre_aw BETWEEN 0 AND 6 THEN gre_aw END)::numeric,2)
         FROM applicants
         WHERE gpa IS NOT NULL OR gre IS NOT NULL OR gre_v IS NOT NULL OR gre_aw IS NOT NULL;
     """)
