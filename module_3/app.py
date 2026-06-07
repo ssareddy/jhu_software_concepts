@@ -24,21 +24,44 @@ _scrape_running = False
 
 
 def _run_scraper():
-    """Run the Module 2 scraper in a background thread."""
+    """Run the Module 2 scraper in a background thread, then load new data into DB."""
     global _scrape_running
     try:
-        # Adjust the path to your Module 2 scraper as needed
-        scraper_path = os.path.join(
-            os.path.dirname(__file__), "..", "module_2", "scraper.py"
-        )
+        module_dir = os.path.abspath(os.path.dirname(__file__))
+        raw_json_path     = os.path.join(module_dir, "raw_results.json")
+        cleaned_json_path = os.path.join(module_dir, "applicant_data.json")
+
+        # Step 1: Import and run scrape_data (first 10 pages only)
+        # New entries appear at the top of Grad Café so this captures recent data.
+        # ON CONFLICT DO NOTHING in load_data.py handles any duplicates.
+        sys.path.insert(0, module_dir)
+        from scrape import scrape_data
+        from pathlib import Path
+        scrape_data(max_pages=10, output_file=Path(raw_json_path), start_page=1)
+
+        # Step 2: Clean the raw records using clean.py
+        import json
+        from clean import clean_data, save_data
+        with open(raw_json_path, encoding="utf-8") as f:
+            raw_records = json.load(f)
+        # Handle resume-marker format
+        if isinstance(raw_records, dict) and "records" in raw_records:
+            raw_records = raw_records["records"]
+        cleaned = clean_data(raw_records)
+        save_data(cleaned, Path(cleaned_json_path))
+
+        # Step 3: Load cleaned data into the database
+        load_data_path = os.path.join(module_dir, "load_data.py")
         subprocess.run(
-            [sys.executable, scraper_path],
+            [sys.executable, load_data_path, "--json", cleaned_json_path],
             check=True,
             capture_output=True,
             text=True,
         )
+        print("✓ Scrape, clean, and load completed successfully.")
+
     except Exception as e:
-        print(f"Scraper error: {e}")
+        print(f"Scraper/load error: {e}")
     finally:
         with _scrape_lock:
             _scrape_running = False
