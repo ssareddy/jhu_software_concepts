@@ -24,41 +24,72 @@ _scrape_running = False
 
 
 def _run_scraper():
-    """Run the Module 2 scraper in a background thread, then load new data into DB."""
+    """
+    Background thread: scrape → clean → insert into DB, all in memory.
+    raw_results.json is still written by scrape_data() as a checkpoint,
+    but applicant_data.json is never created — cleaned records go straight
+    into the database via psycopg2.
+    """
     global _scrape_running
     try:
-        module_dir = os.path.abspath(os.path.dirname(__file__))
-        raw_json_path     = os.path.join(module_dir, "raw_results.json")
-        cleaned_json_path = os.path.join(module_dir, "applicant_data.json")
+        import psycopg2
+        from psycopg2 import extras
+        from pathlib import Path
 
-        # Step 1: Import and run scrape_data (first 10 pages only)
-        # New entries appear at the top of Grad Café so this captures recent data.
-        # ON CONFLICT DO NOTHING in load_data.py handles any duplicates.
+        module_dir = os.path.abspath(os.path.dirname(__file__))
+
+        # Step 1: Scrape (output_file=None means no file written, records returned in memory)
         sys.path.insert(0, module_dir)
         from scrape import scrape_data
-        from pathlib import Path
-        scrape_data(max_pages=10, output_file=Path(raw_json_path), start_page=1)
+        raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)
 
-        # Step 2: Clean the raw records using clean.py
-        import json
-        from clean import clean_data, save_data
-        with open(raw_json_path, encoding="utf-8") as f:
-            raw_records = json.load(f)
-        # Handle resume-marker format
-        if isinstance(raw_records, dict) and "records" in raw_records:
-            raw_records = raw_records["records"]
+        # Step 2: Clean in memory
+        from clean import clean_data
         cleaned = clean_data(raw_records)
-        save_data(cleaned, Path(cleaned_json_path))
 
-        # Step 3: Load cleaned data into the database
-        load_data_path = os.path.join(module_dir, "load_data.py")
-        subprocess.run(
-            [sys.executable, load_data_path, "--json", cleaned_json_path],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        print("✓ Scrape, clean, and load completed successfully.")
+        # Step 4: Insert directly into DB, skipping duplicates via url UNIQUE
+        from query_data import DB_CONFIG
+        conn = psycopg2.connect(**DB_CONFIG)
+
+        def parse_float(val):
+            try:
+                return float(val) if val not in (None, "", "N/A") else None
+            except (ValueError, TypeError):
+                return None
+
+        rows = []
+        for r in cleaned:
+            rows.append((
+                r.get("program"),
+                r.get("comments"),
+                r.get("date_added"),
+                r.get("url"),
+                r.get("status"),
+                r.get("term"),
+                r.get("US/International"),
+                parse_float(r.get("GPA")),
+                parse_float(r.get("GRE")),
+                parse_float(r.get("GRE V")),
+                parse_float(r.get("GRE AW")),
+                r.get("Degree"),
+                r.get("llm-generated-program"),
+                r.get("llm-generated-university"),
+            ))
+
+        INSERT_SQL = """
+            INSERT INTO applicants (
+                program, comments, date_added, url, status, term,
+                us_or_international, gpa, gre, gre_v, gre_aw, degree,
+                llm_generated_program, llm_generated_university
+            ) VALUES %s
+            ON CONFLICT (url) DO NOTHING;
+        """
+        with conn.cursor() as cur:
+            extras.execute_values(cur, INSERT_SQL, rows, page_size=500)
+        conn.commit()
+        conn.close()
+
+        print(f"✓ Scrape, clean, and load completed. {len(rows)} records processed.")
 
     except Exception as e:
         print(f"Scraper/load error: {e}")

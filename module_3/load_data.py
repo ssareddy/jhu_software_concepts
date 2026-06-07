@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS applicants (
     program               TEXT,
     comments              TEXT,
     date_added            DATE,
-    url                   TEXT,
+    url                   TEXT UNIQUE,
     status                TEXT,
     term                  TEXT,
     us_or_international   TEXT,
@@ -55,7 +55,7 @@ INSERT INTO applicants (
     llm_generated_program, llm_generated_university
 )
 VALUES %s
-ON CONFLICT DO NOTHING;
+ON CONFLICT (url) DO NOTHING;
 """
 
 

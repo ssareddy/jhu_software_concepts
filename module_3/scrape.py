@@ -47,7 +47,7 @@ WAIT_TIMEOUT = 15
 RATE_LIMIT_PAUSE = 600  # 10 minutes
 
 # Intermediate file storing raw scraped records for input to clean.py
-RAW_FILE = Path("../module_2/raw_results.json")
+RAW_FILE = Path("raw_results.json")
 
 
 # ---------------------------------------------------------------------------
@@ -519,8 +519,16 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
     finally:
         _safe_quit(driver)
 
-    _save_raw(all_records, output_file)
-    print(f"[scrape] Done. {len(all_records):,} raw records saved to {output_file}.")
+    # Only save to file when output_file is provided (CLI runs).
+    # When called from app.py with output_file=None, return records in memory
+    # to avoid bloating raw_results.json on every Pull Data request.
+    if output_file is not None:
+        _save_raw(all_records, output_file)
+        print(f"[scrape] Done. {len(all_records):,} raw records saved to {output_file}.")
+    else:
+        print(f"[scrape] Done. {len(all_records):,} raw records returned in memory.")
+
+    return all_records
 
 
 def _save_raw(records: list[dict], path: Path) -> None:
