@@ -180,10 +180,6 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
     return None
 
 
-# ---------------------------------------------------------------------------
-# HTML parsing helpers (BeautifulSoup + regex + string methods)
-# ---------------------------------------------------------------------------
-
 def _parse_entry(summary_row, detail_row) -> dict:
     """
     Extract a single applicant record from a pair of <tr> tags.
@@ -222,43 +218,62 @@ def _parse_entry(summary_row, detail_row) -> dict:
     decision_cell = cells[3] if len(cells) > 3 else None
     raw_decision = decision_cell.get_text(separator=" ", strip=True) if decision_cell else ""
 
-    # URL to individual result page
+    # URL to individual result page.
+    # Search the entire summary row for any /result/ link — the anchor can
+    # appear on the school name, the decision text, or elsewhere depending
+    # on GradCafe's current markup.
     url = ""
-    link_tag = (decision_cell or summary_row).find("a", href=True)
-    if link_tag:
-        href = link_tag["href"]
-        url = href if href.startswith("http") else urllib.parse.urljoin(BASE_URL, href)
+    for a_tag in summary_row.find_all("a", href=True):
+        href = a_tag["href"]
+        if "/result/" in href:
+            url = href if href.startswith("http") else urllib.parse.urljoin(BASE_URL, href)
+            break
 
     # ---- detail row --------------------------------------------------------
-    # The detail row holds ALL structured stats and the free-text comment.
-    # Text content looks like (newline-separated blocks):
-    #   "Accepted on May 15   Fall 2026   International   GPA 3.84"
-    #   "I was really surprised! The email was sent at 10 p.m. ..."
+    # The detail row holds structured tag tokens AND the free-text comment.
+    # Both live in the same <td>. The tag tokens match known patterns:
+    #   season   — "Fall 2026", "Spring 2025", etc.
+    #   status   — "American", "International"
+    #   GPA      — "GPA 3.84"
+    #   GRE      — "GRE 320", "GRE V 165", "GRE AW 4.0"
+    #   decision — "Accepted on May 15", "Rejected on Jun 02"
+    # Everything that does NOT match any tag pattern is free-text notes.
+    _TAG_RE = re.compile(
+        r"^("
+        r"(fall|spring|summer|winter)\s+\d{4}"           # season
+        r"|american|international|domestic"               # student type
+        r"|gpa\s*[\d.]+"                                  # GPA token
+        r"|gre(\s+(v(erbal)?|q(uant)?|aw|writing))?\s*[\d.]+"  # GRE token
+        r"|(accepted|rejected|waitlisted|interview\w*)"   # decision word
+        r"(\s+on\s+.*)?"                                  # optional "on <date>"
+        r")$",
+        re.I,
+    )
+
     raw_tags = ""
     raw_notes = ""
 
     if detail_row is not None:
-        # Collect all text nodes / inline elements, preserving paragraph breaks
         detail_td = detail_row.find("td")
         if detail_td:
-            # Each logical block is usually a <p>, <div>, or <span>; fall back
-            # to splitting on double-whitespace if the markup is flat.
-            blocks = []
-            for tag in detail_td.find_all(["p", "div", "span"], recursive=False):
-                t = tag.get_text(separator=" ", strip=True)
-                if t:
-                    blocks.append(t)
+            # Gather all text from the cell, splitting on whitespace runs of 3+
+            # chars OR newlines — these are the natural token boundaries GradCafe uses.
+            full_text = detail_td.get_text(separator="\n", strip=True)
+            all_tokens = [
+                t.strip()
+                for t in re.split(r"\n+|\s{3,}", full_text)
+                if t.strip()
+            ]
 
-            if not blocks:
-                # Flat text fallback: split on 3+ spaces or newlines
-                full = detail_td.get_text(separator="\n", strip=True)
-                blocks = [b.strip() for b in re.split(r"\n{2,}|\s{3,}", full) if b.strip()]
+            tag_tokens, note_tokens = [], []
+            for token in all_tokens:
+                if _TAG_RE.match(token):
+                    tag_tokens.append(token)
+                else:
+                    note_tokens.append(token)
 
-            if blocks:
-                # The FIRST block is always the stats/tags line.
-                raw_tags = blocks[0]
-                # Everything after is the applicant's free-text comment.
-                raw_notes = " ".join(blocks[1:]).strip()
+            raw_tags  = "   ".join(tag_tokens)
+            raw_notes = " ".join(note_tokens).strip()
 
     # Merge decision label + tags into a single string that clean.py can mine
     # for: decision date, semester, student type, GPA, GRE scores.
