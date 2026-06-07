@@ -42,6 +42,10 @@ MAX_PAGES = 1500
 # Selenium explicit-wait timeout (seconds)
 WAIT_TIMEOUT = 15
 
+# How long to pause (seconds) when the site appears to be rate-limiting,
+# before rebuilding the browser session and retrying the same page.
+RATE_LIMIT_PAUSE = 600  # 10 minutes
+
 # Intermediate file storing raw scraped records for input to clean.py
 RAW_FILE = Path("raw_results.json")
 
@@ -429,32 +433,55 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
     driver = _build_driver()
 
     try:
-        for page_num in range(start_page, max_pages + 1):
+        page_num = start_page
+        while page_num <= max_pages:
             url = _build_search_url(page=page_num)
             print(f"[scrape] Page {page_num}: {url}")
 
             # Polite delay between requests (skip on first page)
-            if page_num > 1:
+            if page_num > start_page:
                 delay = MIN_DELAY + (MAX_DELAY - MIN_DELAY) * (page_num % 7) / 6
                 time.sleep(delay)
 
             html = _get_page_source(driver, url)
-            if html is None:
-                print(f"[scrape] Page {page_num}: failed to load. Stopping.")
-                _write_resume_marker(all_records, page_num, output_file)
-                print(f"[scrape] Resume marker written. "
-                      f"Run again to continue from page {page_num}.")
-                return
 
+            # ---- Rate-limit / load failure: pause then rebuild session ----
+            if html is None or not _parse_page(html):
+                reason = (
+                    "failed to load after all retries"
+                    if html is None
+                    else "page loaded but returned no records — site may be blocking"
+                )
+                print(f"[scrape] Page {page_num}: {reason}.")
+
+                # Save progress so data is safe during the pause.
+                _write_resume_marker(all_records, page_num, output_file)
+                print(f"[scrape] {len(all_records):,} records saved. "
+                      f"Pausing {RATE_LIMIT_PAUSE // 60} minutes before retrying "
+                      f"page {page_num} with a fresh browser session...")
+
+                # Tear down the poisoned session before sleeping.
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+                # Count down so the console shows the scrape is still alive.
+                remaining = RATE_LIMIT_PAUSE
+                while remaining > 0:
+                    print(f"[scrape] Resuming in {remaining // 60}m {remaining % 60:02d}s…",
+                          end="\r", flush=True)
+                    time.sleep(min(30, remaining))
+                    remaining -= min(30, remaining)
+                print()  # newline after the countdown
+
+                # Rebuild the driver and retry the same page — do NOT advance.
+                driver = _build_driver()
+                print(f"[scrape] Fresh browser session ready. Retrying page {page_num}.")
+                continue  # retry the same page_num
+
+            # ---- Successful page ----
             records = _parse_page(html)
-            if not records:
-                print(f"[scrape] Page {page_num}: no records found — "
-                      "site may be blocking. Stopping early.")
-                _write_resume_marker(all_records, page_num, output_file)
-                print(f"[scrape] Resume marker written. "
-                      f"Run again to continue from page {page_num}.")
-                return
-
             for r in records:
                 r["source_page"] = page_num
                 r["source_url"] = url
@@ -466,6 +493,8 @@ def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_
             if page_num % 50 == 0:
                 _save_raw(all_records, output_file)
                 print(f"[scrape] Checkpoint saved ({len(all_records):,} records).")
+
+            page_num += 1  # only advance on success
 
     finally:
         driver.quit()

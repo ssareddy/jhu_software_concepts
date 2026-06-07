@@ -271,12 +271,18 @@ def _extract_decision_date(raw_notes: str, raw_date: str) -> str | None:
         if mdy:
             return f"{mdy.group(3)}-{int(mdy.group(1)):02d}-{int(mdy.group(2)):02d}"
 
-        # Month Day, Year  or  Month Day  (infer current year as fallback)
+        # Month Day, Year  or  Month Day  (no year in notes → borrow from raw_date)
         mdn = re.match(r"([A-Za-z]+)\s+(\d{1,2})(?:,\s*(\d{4}))?", candidate)
         if mdn:
             month_str = mdn.group(1).lower()
             if month_str in months:
-                year = mdn.group(3) or str(__import__("datetime").date.today().year)
+                # Prefer explicit year in the note; fall back to the year in
+                # raw_date (the post date), which is always >= the decision date.
+                if mdn.group(3):
+                    year = mdn.group(3)
+                else:
+                    yr_match = re.search(r"(20\d{2}|19\d{2})", raw_date)
+                    year = yr_match.group(1) if yr_match else "0000"
                 return f"{year}-{months[month_str]:02d}-{int(mdn.group(2)):02d}"
 
     # Fallback: parse raw_date as-is
