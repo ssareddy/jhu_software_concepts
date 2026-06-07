@@ -430,7 +430,7 @@ def _load_existing_records(output_file: Path) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> None:
+def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> list:
     """
     Main scraping entry point.
 
