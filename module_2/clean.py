@@ -364,10 +364,10 @@ def _clean_record(raw: dict) -> dict:
         )
         program_name = _DEGREE_SUFFIX.sub("", col1).strip().strip(",·").strip()
 
-    university   = _strip_html(raw.get("raw_institution_program", "")).strip()
-    # Combine as "Program, University" — no trailing space.
+    university = _strip_html(raw.get("raw_institution_program", "")).strip()
+    # "Program, University" — no trailing space.
     if program_name and university:
-        program_field = f"{program_name}, {university} "
+        program_field = f"{program_name}, {university}"
     else:
         program_field = program_name or university or None
 
@@ -380,12 +380,29 @@ def _clean_record(raw: dict) -> dict:
     )
     comments = "" if (not notes_clean or status_only) else notes_clean
 
-    # ---- date_added --------------------------------------------------------
-    raw_date = raw.get("raw_date", "").strip()
-    date_added = f"Added on {raw_date}" if raw_date else None
+    # ---- date_added: "Month DD, YYYY" (no prefix) --------------------------
+    raw_date   = raw.get("raw_date", "").strip()
+    date_added = raw_date if raw_date else None
 
     # ---- status ------------------------------------------------------------
     status = decision.strip() or None
+
+    # ---- acceptance_date / rejection_date ----------------------------------
+    acceptance_date = None
+    rejection_date  = None
+    if status:
+        m = re.search(
+            r"(?:accepted|wait\s*listed|interview\w*)\s+on\s+([A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)",
+            status, re.I,
+        )
+        if m:
+            acceptance_date = m.group(1).strip()
+        m = re.search(
+            r"rejected\s+on\s+([A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)",
+            status, re.I,
+        )
+        if m:
+            rejection_date = m.group(1).strip()
 
     # ---- term --------------------------------------------------------------
     term = _extract_semester_year(tags) or _extract_semester_year(notes_clean) or None
@@ -393,30 +410,38 @@ def _clean_record(raw: dict) -> dict:
     # ---- US/International --------------------------------------------------
     us_intl = _extract_student_type(tags) or _extract_student_type(notes_clean) or None
 
-    # ---- GPA: raw string e.g. "GPA 3.88", omitted when not found ----------
+    # ---- GPA: plain numeric string e.g. "3.88", null when not found --------
     gpa_val = _extract_gpa(tags) or _extract_gpa(notes_clean)
-    gpa_str = f"GPA {gpa_val}" if gpa_val is not None else None
+    gpa_str = str(gpa_val) if gpa_val is not None else None
+
+    # ---- GRE: always present, null when not found --------------------------
+    gre        = _extract_gre(tags + " " + notes_clean)
+    gre_total  = gre["gre_total"]
+    gre_verbal = gre["gre_verbal"]
+    gre_aw     = gre["gre_aw"]
 
     # ---- Degree ------------------------------------------------------------
     combined_text = " ".join(filter(None, [col1, tags, notes_clean]))
     degree = _normalize_degree(combined_text)
 
-    record: dict = {
+    return {
         "program":          program_field,
+        "university_raw":   university or None,
+        "program_raw":      program_name or None,
         "comments":         comments,
         "date_added":       date_added,
         "url":              raw.get("url") or None,
         "status":           status,
+        "acceptance_date":  acceptance_date,
+        "rejection_date":   rejection_date,
         "term":             term,
         "US/International": us_intl,
         "Degree":           degree,
+        "GPA":              gpa_str,
+        "GRE":              gre_total,
+        "GRE V":            gre_verbal,
+        "GRE AW":           gre_aw,
     }
-
-    # GPA included only when present, matching sample_data.json format.
-    if gpa_str is not None:
-        record["GPA"] = gpa_str
-
-    return record
 
 # ---------------------------------------------------------------------------
 # Public API

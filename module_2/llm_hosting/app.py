@@ -377,7 +377,8 @@ def _cli_process_file(
         final_path = out_path or in_path.replace(".json", "_llm.json")
         with open(final_path, "w", encoding="utf-8") as fh:
             json.dump(out_records, fh, ensure_ascii=False, indent=2)
-        print(f"[llm] {len(out_records):,} records written to {final_path}.")
+        print(f"[llm] {len(out_records):,} records written to {final_path}.",
+              file=sys.stderr)
 
 
 if __name__ == "__main__":
@@ -399,8 +400,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--out",
         default=None,
-        help="Output path for JSON Lines (ndjson). "
-        "Defaults to <input>.jsonl when --file is set.",
+        help="Output file path. Defaults to <input>_llm.json when --file is set.",
     )
     parser.add_argument(
         "--append",
