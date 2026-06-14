@@ -179,7 +179,7 @@ make html               # Linux / macOS
 # Output at: module_4/docs/_build/html/index.html
 ```
 
-Published HTML is available at: *(link to Read the Docs after CI publish)*
+Published HTML is available at: https://jhu-software-concepts-readthedocs.readthedocs.io/en/latest/index.html#
 
 ---
 
