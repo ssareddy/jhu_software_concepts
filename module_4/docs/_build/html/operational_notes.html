@@ -1,0 +1,199 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Operational Notes &mdash; Grad Café Analytics 4.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=9f5556dd"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Testing Guide" href="testing_guide.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Grad Café Analytics
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Overview &amp; Setup</a></li>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api_reference.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="testing_guide.html">Testing Guide</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Operational Notes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#busy-state-policy">Busy-State Policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#idempotency-strategy">Idempotency Strategy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#connection-configuration">Connection Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#troubleshooting">Troubleshooting</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Grad Café Analytics</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Operational Notes</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/operational_notes.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="operational-notes">
+<h1>Operational Notes<a class="headerlink" href="#operational-notes" title="Link to this heading"></a></h1>
+<section id="busy-state-policy">
+<h2>Busy-State Policy<a class="headerlink" href="#busy-state-policy" title="Link to this heading"></a></h2>
+<p>The app uses a module-level boolean <code class="docutils literal notranslate"><span class="pre">_scrape_running</span></code> guarded by a
+<code class="docutils literal notranslate"><span class="pre">threading.Lock</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/api/pull_data</span></code> sets the flag to <code class="docutils literal notranslate"><span class="pre">True</span></code> and starts a background
+thread.  If the flag is already <code class="docutils literal notranslate"><span class="pre">True</span></code> it returns <strong>409</strong>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/api/update_analysis</span></code> checks the flag; if <code class="docutils literal notranslate"><span class="pre">True</span></code> it returns
+<strong>409</strong> and performs no DB query.</p></li>
+<li><p>The background thread always clears the flag in a <code class="docutils literal notranslate"><span class="pre">finally</span></code> block, even
+on error, so a failed scrape never permanently locks the system.</p></li>
+</ul>
+</section>
+<section id="idempotency-strategy">
+<h2>Idempotency Strategy<a class="headerlink" href="#idempotency-strategy" title="Link to this heading"></a></h2>
+<p>Every row is assigned a <code class="docutils literal notranslate"><span class="pre">content_hash</span></code> (SHA-256 of <code class="docutils literal notranslate"><span class="pre">program</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code>,
+<code class="docutils literal notranslate"><span class="pre">date_added</span></code>, and <code class="docutils literal notranslate"><span class="pre">url</span></code>) at insert time.  This is the primary dedup key:</p>
+<div class="highlight-sql notranslate"><div class="highlight"><pre><span></span><span class="k">ON</span><span class="w"> </span><span class="n">CONFLICT</span><span class="w"> </span><span class="p">(</span><span class="n">content_hash</span><span class="p">)</span><span class="w"> </span><span class="k">DO</span><span class="w"> </span><span class="k">NOTHING</span>
+</pre></div>
+</div>
+<p>This means:</p>
+<ul class="simple">
+<li><p>Records with a valid URL are deduplicated by <em>both</em> <code class="docutils literal notranslate"><span class="pre">content_hash</span></code> and
+<code class="docutils literal notranslate"><span class="pre">url</span></code> (the <code class="docutils literal notranslate"><span class="pre">url</span></code> column also carries a UNIQUE constraint).</p></li>
+<li><p>Records whose URL is missing or malformed are still deduplicated by their
+content — they never silently accumulate on repeated pulls.</p></li>
+<li><p>Completely empty records (no program, status, or URL) are skipped with a
+logged warning before reaching the database.</p></li>
+</ul>
+</section>
+<section id="connection-configuration">
+<h2>Connection Configuration<a class="headerlink" href="#connection-configuration" title="Link to this heading"></a></h2>
+<p>All database credentials are resolved from the environment — no hard-coded
+passwords anywhere.  <code class="docutils literal notranslate"><span class="pre">db_config.py</span></code> is the single source of truth:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">DATABASE_URL</span></code></p></td>
+<td><p>Full connection string (takes priority). E.g. <code class="docutils literal notranslate"><span class="pre">postgresql://user:pass&#64;host/db</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">DB_HOST</span></code></p></td>
+<td><p>Host (default: <code class="docutils literal notranslate"><span class="pre">localhost</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">DB_PORT</span></code></p></td>
+<td><p>Port (default: <code class="docutils literal notranslate"><span class="pre">5432</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">DB_NAME</span></code></p></td>
+<td><p>Database name (default: <code class="docutils literal notranslate"><span class="pre">gradcafe</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">DB_USER</span></code></p></td>
+<td><p>Username (default: <code class="docutils literal notranslate"><span class="pre">postgres</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">DB_PASSWORD</span></code></p></td>
+<td><p>Password (default: empty — relies on peer/trust auth or <code class="docutils literal notranslate"><span class="pre">.pgpass</span></code>)</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading"></a></h2>
+<p><strong>Tests fail with “could not connect to server”</strong></p>
+<p>Set <code class="docutils literal notranslate"><span class="pre">DATABASE_URL</span></code> and ensure the test database exists:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">export</span> <span class="n">DATABASE_URL</span><span class="o">=</span><span class="s2">&quot;postgresql://postgres:postgres@localhost:5432/gradcafe_test&quot;</span>
+<span class="n">createdb</span> <span class="n">gradcafe_test</span>
+</pre></div>
+</div>
+<p><strong>Coverage under 100%</strong></p>
+<p>Run with <code class="docutils literal notranslate"><span class="pre">--cov-report=term-missing</span></code> to see which lines are uncovered,
+then add tests for those branches.</p>
+<p><strong>GitHub Actions: Postgres service not ready</strong></p>
+<p>The workflow uses <code class="docutils literal notranslate"><span class="pre">pg_isready</span></code> health checks with 5 retries (10 s interval).
+If Postgres still isn’t ready, increase <code class="docutils literal notranslate"><span class="pre">health-retries</span></code> in
+<code class="docutils literal notranslate"><span class="pre">.github/workflows/tests.yml</span></code>.</p>
+<p><strong>Scraper rate-limited</strong></p>
+<p>All tests inject a fake loader — no live scraping in the test suite.
+If running the real scraper locally and hitting rate limits, the scraper
+pauses automatically (see <code class="docutils literal notranslate"><span class="pre">RATE_LIMIT_PAUSE</span></code> in <code class="docutils literal notranslate"><span class="pre">scrape.py</span></code>).</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="testing_guide.html" class="btn btn-neutral float-left" title="Testing Guide" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
