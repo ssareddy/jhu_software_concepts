@@ -1,10 +1,8 @@
 [run]
 source = module_4/src
+data_file = module_4/.coverage
 
 [report]
 fail_under = 100
 omit =
-    # scrape.py uses Selenium with a live browser.
-    # The assignment forbids live-internet tests (SHALL NOT section),
-    # so this file cannot be unit tested without violating that constraint.
-    module_4/src/scrape.py
+    */scrape.py

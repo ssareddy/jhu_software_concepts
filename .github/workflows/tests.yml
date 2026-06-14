@@ -44,14 +44,12 @@ jobs:
 
       - name: Run pytest suite with coverage
         run: |
-          cd ..
           pytest module_4/tests \
             -m "web or buttons or analysis or db or integration" \
             --cov=module_4/src \
             --cov-report=term-missing \
             --cov-fail-under=100 \
             -q
-        working-directory: ${{ github.workspace }}
 
       - name: Save coverage summary
         run: |
