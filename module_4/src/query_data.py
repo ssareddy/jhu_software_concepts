@@ -2,52 +2,46 @@
 query_data.py
 -------------
 Answers required analysis questions using SQL queries against the
-`applicants` PostgreSQL table populated by load_data.py.
+``applicants`` PostgreSQL table populated by load_data.py.
 
-Usage:
-    python query_data.py
+Connection is resolved entirely from environment variables via db_config.py:
 
-Environment variables (or edit DB_CONFIG):
-    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+    DATABASE_URL=postgresql://user:pass@host/gradcafe python query_data.py
+
+or with individual variables:
+
+    DB_HOST=localhost DB_PORT=5432 DB_NAME=gradcafe DB_USER=postgres DB_PASSWORD=secret python query_data.py
+
+No credentials are hard-coded here.
 """
 
 import os
 import psycopg2
 
-DB_CONFIG = {
-    "host":     "localhost",
-    "port":     5432,
-    "dbname":   "gradcafe",   # whatever you named your database
-    "user":     "postgres",   # your PostgreSQL username
-    "password": "banu1998",  # your PostgreSQL password
-}
+from db_config import get_db_config, get_connection
+
+# Re-export DB_CONFIG as a mutable dict so tests can patch it without
+# touching the environment.  Always reflects the current environment at
+# import time; tests that need a different DB should set DATABASE_URL
+# before importing, or patch db_config.get_db_config directly.
+DB_CONFIG = get_db_config()
 
 
-def get_connection():
+def _conn():
+    """Open a connection using the current DB_CONFIG (patchable by tests)."""
     return psycopg2.connect(**DB_CONFIG)
 
 
 def run_queries():
-    conn = get_connection()
+    conn = _conn()
     cur = conn.cursor()
 
-    # ------------------------------------------------------------------
-    # Q1: How many entries applied for Fall 2026?
-    # Filter rows where `term` contains 'Fall 2026'.
-    # ------------------------------------------------------------------
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM applicants
-        WHERE term ILIKE '%Fall 2026%';
-    """)
+    # Q1
+    cur.execute("SELECT COUNT(*) FROM applicants WHERE term ILIKE '%Fall 2026%';")
     fall_2026_count = cur.fetchone()[0]
     print(f"Applicant count: {fall_2026_count}")
 
-    # ------------------------------------------------------------------
-    # Q2: Percentage of international students (not American or Other)
-    # We count rows where us_or_international is 'International', then
-    # divide by total non-null entries and multiply by 100.
-    # ------------------------------------------------------------------
+    # Q2
     cur.execute("""
         SELECT
             ROUND(
@@ -71,10 +65,7 @@ def run_queries():
     print(f"Other count: {other_count}")
     print(f"Percent International {pct_intl}")
 
-    # ------------------------------------------------------------------
-    # Q3: Average GPA, GRE, GRE V, GRE AW for applicants who provided them.
-    # AVG() automatically ignores NULLs, so only rows with values count.
-    # ------------------------------------------------------------------
+    # Q3
     cur.execute("""
         SELECT
             ROUND(AVG(gpa)::numeric,   2) AS avg_gpa,
@@ -91,10 +82,7 @@ def run_queries():
     print(f"Average GPA: {avg_gpa}, Average GRE: {avg_gre}, "
           f"Average GRE V: {avg_gre_v}, Average GRE AW: {avg_gre_aw}")
 
-    # ------------------------------------------------------------------
-    # Q4: Average GPA of American students in Fall 2026.
-    # Filter to Fall 2026 term and American nationality.
-    # ------------------------------------------------------------------
+    # Q4
     cur.execute("""
         SELECT ROUND(AVG(gpa)::numeric, 2)
         FROM applicants
@@ -105,10 +93,7 @@ def run_queries():
     avg_gpa_american = cur.fetchone()[0]
     print(f"Average GPA American: {avg_gpa_american}")
 
-    # ------------------------------------------------------------------
-    # Q5: Percent of Fall 2026 entries that are Acceptances.
-    # Filter to Fall 2026 term; count where status = 'Accepted'.
-    # ------------------------------------------------------------------
+    # Q5
     cur.execute("""
         SELECT
             COUNT(*) FILTER (WHERE status ILIKE '%accept%') AS accept_count,
@@ -125,9 +110,7 @@ def run_queries():
     print(f"Acceptance count: {accept_count}")
     print(f"Acceptance percent: {pct_accepted}")
 
-    # ------------------------------------------------------------------
-    # Q6: Average GPA of Fall 2026 Accepted applicants.
-    # ------------------------------------------------------------------
+    # Q6
     cur.execute("""
         SELECT ROUND(AVG(gpa)::numeric, 2)
         FROM applicants
@@ -138,10 +121,7 @@ def run_queries():
     avg_gpa_accepted = cur.fetchone()[0]
     print(f"Average GPA Acceptance: {avg_gpa_accepted}")
 
-    # ------------------------------------------------------------------
-    # Q7: Entries from applicants who applied to JHU for a Masters in CS.
-    # Use llm_generated_university for JHU and degree for Masters, program for CS.
-    # ------------------------------------------------------------------
+    # Q7
     cur.execute("""
         SELECT COUNT(*)
         FROM applicants
@@ -159,19 +139,14 @@ def run_queries():
     jhu_ms_cs_count = cur.fetchone()[0]
     print(f"JHU Masters Computer Science count: {jhu_ms_cs_count}")
 
-    # ------------------------------------------------------------------
-    # Q8: Fall 2026 acceptances to Georgetown, MIT, Stanford, or CMU for PhD CS
-    # using the downloaded (scraped) program/university fields.
-    # ------------------------------------------------------------------
+    # Q8
     cur.execute("""
         SELECT COUNT(*)
         FROM applicants
         WHERE term ILIKE '%2026%'
           AND status ILIKE '%accept%'
           AND degree ILIKE '%ph%'
-          AND (
-            program ILIKE '%computer science%'
-          )
+          AND program ILIKE '%computer science%'
           AND (
             program ILIKE '%Georgetown%'
             OR program ILIKE '%Massachusetts Institute%'
@@ -184,18 +159,14 @@ def run_queries():
     q8_scraped_count = cur.fetchone()[0]
     print(f"Q8 (Scraped fields) - PhD CS Acceptances at top schools in 2026: {q8_scraped_count}")
 
-    # ------------------------------------------------------------------
-    # Q9: Same as Q8, but using LLM-generated fields instead.
-    # ------------------------------------------------------------------
+    # Q9
     cur.execute("""
         SELECT COUNT(*)
         FROM applicants
         WHERE term ILIKE '%2026%'
           AND status ILIKE '%accept%'
           AND degree ILIKE '%ph%'
-          AND (
-            llm_generated_program ILIKE '%computer science%'
-          )
+          AND llm_generated_program ILIKE '%computer science%'
           AND (
             llm_generated_university ILIKE '%Georgetown%'
             OR llm_generated_university ILIKE '%Massachusetts Institute%'
@@ -206,18 +177,9 @@ def run_queries():
           );
     """)
     q9_llm_count = cur.fetchone()[0]
-    print(f"Q9 (LLM fields)    - PhD CS Acceptances at top schools in 2026: {q9_llm_count}")
-    if q8_scraped_count != q9_llm_count:
-        print(f"  → Numbers differ: scraped={q8_scraped_count}, LLM={q9_llm_count}. "
-              "LLM fields tend to normalize university names, capturing more matches.")
-    else:
-        print("  → Numbers are the same with both field types.")
+    print(f"Q9 (LLM fields) - PhD CS Acceptances at top schools in 2026: {q9_llm_count}")
 
-    # ------------------------------------------------------------------
-    # CUSTOM Q10: Which degree type (PhD vs Masters) has the higher
-    # average GPA among Fall 2026 applicants?
-    # Motivation: Understand if PhD applicants are stronger academically.
-    # ------------------------------------------------------------------
+    # Q10
     cur.execute("""
         SELECT
             CASE
@@ -237,11 +199,7 @@ def run_queries():
     for row in cur.fetchall():
         print(f"  {row[0]}: avg GPA = {row[1]}, count = {row[2]}")
 
-    # ------------------------------------------------------------------
-    # CUSTOM Q11: What is the acceptance rate by nationality (American vs
-    # International) for Fall 2026 PhD Computer Science applicants?
-    # Motivation: Examine whether nationality correlates with PhD CS admissions.
-    # ------------------------------------------------------------------
+    # Q11
     cur.execute("""
         SELECT
             us_or_international,
@@ -271,11 +229,16 @@ def run_queries():
     conn.close()
 
 
-def get_all_results():
+def get_all_results() -> dict:
     """
-    Returns a dict of all query results for use by the Flask app.
+    Run all analysis queries and return a dict consumed by the Flask API.
+
+    Returns
+    -------
+    dict
+        Keys match the template variables used in index.html.
     """
-    conn = get_connection()
+    conn = _conn()
     cur = conn.cursor()
     results = {}
 
@@ -366,7 +329,6 @@ def get_all_results():
     """)
     results["q9_llm"] = cur.fetchone()[0]
 
-    # Custom Q10
     cur.execute("""
         SELECT
             CASE WHEN degree ILIKE '%ph%' THEN 'PhD'
@@ -383,7 +345,6 @@ def get_all_results():
         for r in cur.fetchall()
     ]
 
-    # Custom Q11
     cur.execute("""
         SELECT us_or_international,
             COUNT(*) AS total,

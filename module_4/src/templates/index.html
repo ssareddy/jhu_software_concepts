@@ -18,14 +18,18 @@
       <div class="header-actions">
         <!-- Pull Data button -->
         <div class="btn-wrapper">
-          <button id="btn-pull" class="btn btn-pull" onclick="pullData()">
+          <button id="btn-pull" class="btn btn-pull"
+                  data-testid="pull-data-btn"
+                  onclick="pullData()">
             ⬇ Pull Data
           </button>
           <p class="btn-desc">Scrapes new applicant entries from Grad Café and adds them to the database. May take several minutes.</p>
         </div>
         <!-- Update Analysis button -->
         <div class="btn-wrapper">
-          <button id="btn-update" class="btn btn-update" onclick="updateAnalysis()">
+          <button id="btn-update" class="btn btn-update"
+                  data-testid="update-analysis-btn"
+                  onclick="updateAnalysis()">
             🔄 Update Analysis
           </button>
           <p class="btn-desc">Refreshes all query results with the latest data. Disabled while a data pull is in progress.</p>
@@ -70,7 +74,7 @@
       return `
         <div class="card">
           <p class="card-question">${question}</p>
-          <p class="card-answer">${answer}</p>
+          <p class="card-answer">Answer: ${answer}</p>
         </div>`;
     }
 
@@ -104,22 +108,22 @@
                `Applicant count: <strong>${d.fall_2026_count}</strong>`)}
 
         ${card("What percentage of entries are from International students (not American or Other)?",
-               `Percent International: <strong>${d.pct_international}%</strong>`)}
+               `Percent International: <strong>${d.pct_international.toFixed(2)}%</strong>`)}
 
         ${card("What is the average GPA, GRE, GRE V, GRE AW of applicants who provided these metrics?",
-               `Average GPA: <strong>${d.avg_gpa}</strong> &nbsp;|&nbsp;
-                Average GRE: <strong>${d.avg_gre}</strong> &nbsp;|&nbsp;
-                Average GRE V: <strong>${d.avg_gre_v}</strong> &nbsp;|&nbsp;
-                Average GRE AW: <strong>${d.avg_gre_aw}</strong>`)}
+               `Average GPA: <strong>${d.avg_gpa.toFixed(2)}</strong> &nbsp;|&nbsp;
+                Average GRE: <strong>${d.avg_gre.toFixed(2)}</strong> &nbsp;|&nbsp;
+                Average GRE V: <strong>${d.avg_gre_v.toFixed(2)}</strong> &nbsp;|&nbsp;
+                Average GRE AW: <strong>${d.avg_gre_aw.toFixed(2)}</strong>`)}
 
         ${card("What is the average GPA of American students in Fall 2026?",
-               `Average GPA American: <strong>${d.avg_gpa_american}</strong>`)}
+               `Average GPA American: <strong>${d.avg_gpa_american.toFixed(2)}</strong>`)}
 
         ${card("What percent of entries for Fall 2026 are Acceptances?",
-               `Acceptance percent: <strong>${d.pct_accepted_fall_2026}%</strong>`)}
+               `Acceptance percent: <strong>${d.pct_accepted_fall_2026.toFixed(2)}%</strong>`)}
 
         ${card("What is the average GPA of applicants who applied for Fall 2026 who are Acceptances?",
-               `Average GPA Acceptance: <strong>${d.avg_gpa_accepted}</strong>`)}
+               `Average GPA Acceptance: <strong>${d.avg_gpa_accepted.toFixed(2)}</strong>`)}
 
         ${card("How many entries are from applicants who applied to JHU for a Masters in Computer Science?",
                `JHU Masters CS count: <strong>${d.jhu_ms_cs_count}</strong>`)}
@@ -137,14 +141,16 @@
         <div class="card card-custom">
           <span class="custom-badge">Custom Q10</span>
           <p class="card-question">Which degree type has the higher average GPA among Fall 2026 applicants?</p>
-          <p class="card-sub">PhD programs typically demand stronger academics than Masters programs — this query tests that assumption.</p>
+          <p class="card-answer">Answer: PhD programs typically demand stronger academics than Masters programs — this query tests that assumption.</p>
+          <p class="card-sub"></p>
           ${q10Table}
         </div>
 
         <div class="card card-custom">
           <span class="custom-badge">Custom Q11</span>
           <p class="card-question">What is the Fall 2026 PhD CS acceptance rate broken down by student nationality?</p>
-          <p class="card-sub">Explores whether nationality correlates with PhD Computer Science admission outcomes.</p>
+          <p class="card-answer">Answer: Explores whether nationality correlates with PhD Computer Science admission outcomes.</p>
+          <p class="card-sub"></p>
           ${q11Table}
         </div>
       `;
@@ -181,7 +187,7 @@
 
         if (res.status === 409) {
           showBanner("⚠ A data pull is already running. Please wait.", "warning");
-        } else if (json.status === "started") {
+        } else if (json.ok) {
           showBanner("✅ " + json.message, "success");
           pollScrapeStatus();
         }
@@ -207,34 +213,27 @@
         } catch (_) {
           clearInterval(interval);
         }
-      }, 5000); // check every 5 s
+      }, 5000);
     }
 
     // ── Update Analysis ──────────────────────────────────────────────────
 
     async function updateAnalysis() {
-      // Check if scraper is running first
       try {
-        const statusRes = await fetch("/api/scrape_status");
-        const statusJson = await statusRes.json();
-        if (statusJson.running) {
-          showBanner("⏳ A data pull is currently running. Please wait until it finishes before updating.", "warning");
+        const res = await fetch("/api/update_analysis", { method: "POST" });
+        const json = await res.json();
+
+        if (res.status === 409) {
+          showBanner("⏳ A data pull is currently running. Please wait.", "warning");
           return;
         }
-      } catch (_) {}
-
-      const btn = document.getElementById("btn-update");
-      btn.disabled = true;
-      btn.textContent = "🔄 Updating…";
-
-      document.getElementById("results-container").innerHTML =
-        `<div class="loading-state">Refreshing results…</div>`;
-
-      await loadResults();
-
-      btn.disabled = false;
-      btn.textContent = "🔄 Update Analysis";
-      showBanner("✅ Analysis updated with the latest data.", "success");
+        if (json.ok) {
+          renderResults(json.data);
+          showBanner("✅ Analysis updated with the latest data.", "success");
+        }
+      } catch (e) {
+        showBanner("✗ Could not update analysis.", "error");
+      }
     }
 
     // ── Init ─────────────────────────────────────────────────────────────
