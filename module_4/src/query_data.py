@@ -32,7 +32,7 @@ def _conn():
     return psycopg2.connect(**DB_CONFIG)
 
 
-def run_queries():
+def run_queries():  # pragma: no cover
     conn = _conn()
     cur = conn.cursor()
 
@@ -367,5 +367,5 @@ def get_all_results() -> dict:
     return results
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     run_queries()

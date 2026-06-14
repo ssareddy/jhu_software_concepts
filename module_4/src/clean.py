@@ -43,7 +43,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 RAW_FILE   = Path("../module_2/raw_results.json")
-CLEAN_FILE = Path("../../module_2/applicant_data.json")
+CLEAN_FILE = Path("../module_2/applicant_data.json")
 
 # Mapping common status strings to canonical values
 _STATUS_MAP = {
@@ -497,7 +497,7 @@ def load_data(path: Path = CLEAN_FILE) -> list[dict]:
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     with open(RAW_FILE, encoding="utf-8") as fh:
         raw = json.load(fh)
     cleaned = clean_data(raw)
