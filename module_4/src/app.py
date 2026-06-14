@@ -15,7 +15,7 @@ import threading
 from flask import Flask, jsonify, render_template
 
 # ---------------------------------------------------------------------------
-# Thread-safe busy state (module-level so tests can reset it)
+# Thread-safe busy state
 # ---------------------------------------------------------------------------
 _scrape_lock = threading.Lock()
 _scrape_running = False
@@ -31,6 +31,85 @@ def is_busy() -> bool:
     return _scrape_running
 
 
+def _parse_float(val):
+    """Convert a value to float or None for empty/invalid inputs."""
+    try:
+        return float(val) if val not in (None, "", "N/A") else None
+    except (ValueError, TypeError):
+        return None
+
+
+def run_scraper_pipeline(scraper_fn, db_url=""):
+    """
+    Execute the full scrape → clean → insert pipeline.
+
+    Parameters
+    ----------
+    scraper_fn : callable | None
+        If provided, called instead of the real scrape_data.
+    db_url : str
+        DATABASE_URL override for the DB connection.
+    """
+    import sys
+    import psycopg2
+    from psycopg2 import extras
+
+    module_dir = os.path.abspath(os.path.dirname(__file__))
+    sys.path.insert(0, module_dir)
+
+    try:
+        if scraper_fn is not None:
+            raw_records = scraper_fn()
+        else:
+            from scrape import scrape_data  # pragma: no cover
+            raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)  # pragma: no cover
+
+        from clean import clean_data
+        cleaned = clean_data(raw_records)
+
+        from db_config import get_connection, get_db_config
+        if db_url:
+            import urllib.parse as up
+            r = up.urlparse(db_url)
+            conn = psycopg2.connect(
+                host=r.hostname, port=r.port or 5432,
+                dbname=r.path.lstrip("/"), user=r.username,
+                password=r.password or "",
+            )
+        else:
+            conn = get_connection()
+
+        rows = [
+            (
+                r.get("program"), r.get("comments"), r.get("date_added"),
+                r.get("url"), r.get("status"), r.get("term"),
+                r.get("US/International"), _parse_float(r.get("GPA")),
+                _parse_float(r.get("GRE")), _parse_float(r.get("GRE V")),
+                _parse_float(r.get("GRE AW")), r.get("Degree"),
+                r.get("llm-generated-program"), r.get("llm-generated-university"),
+            )
+            for r in cleaned
+        ]
+
+        INSERT_SQL = """
+            INSERT INTO applicants (
+                program, comments, date_added, url, status, term,
+                us_or_international, gpa, gre, gre_v, gre_aw, degree,
+                llm_generated_program, llm_generated_university
+            ) VALUES %s
+            ON CONFLICT (url) DO NOTHING;
+        """
+        with conn.cursor() as cur:
+            extras.execute_values(cur, INSERT_SQL, rows, page_size=500)
+        conn.commit()
+        conn.close()
+        print(f"✓ Scrape complete. {len(rows)} records processed.")
+    except Exception as e:
+        print(f"Scraper/load error: {e}")
+    finally:
+        _set_busy(False)
+
+
 def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     """
     Application factory.
@@ -38,83 +117,18 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     Parameters
     ----------
     scraper_fn : callable | None
-        Injected scraper. If None, the real scrape_data is imported lazily.
+        Injected scraper replacing scrape_data (for tests).
     loader_fn  : callable | None
-        Injected loader (scrape → clean → insert pipeline). If None, the
-        real _run_scraper logic runs.
+        Fully replaces the entire scrape→clean→insert pipeline (for tests).
     query_fn   : callable | None
-        Injected query function. If None, the real get_all_results is used.
+        Injected query function replacing get_all_results (for tests).
     """
     app = Flask(__name__, template_folder="templates", static_folder="static")
-
-    # Allow DATABASE_URL env var to override the hard-coded config
     app.config["DATABASE_URL"] = os.environ.get("DATABASE_URL", "")
 
-    # Store injectable dependencies on the app so tests can swap them
     app._scraper_fn = scraper_fn
     app._loader_fn  = loader_fn
     app._query_fn   = query_fn
-
-    # ------------------------------------------------------------------
-    # Internal runner
-    # ------------------------------------------------------------------
-    def _run_scraper_default():
-        global _scrape_running
-        import sys, psycopg2
-        from psycopg2 import extras
-        from pathlib import Path
-
-        module_dir = os.path.abspath(os.path.dirname(__file__))
-        sys.path.insert(0, module_dir)
-
-        try:
-            if app._scraper_fn is not None:
-                raw_records = app._scraper_fn()
-            else:
-                from scrape import scrape_data
-                raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)
-
-            from clean import clean_data
-            cleaned = clean_data(raw_records)
-
-            from db_config import get_connection
-            conn = get_connection()
-
-            def parse_float(val):
-                try:
-                    return float(val) if val not in (None, "", "N/A") else None
-                except (ValueError, TypeError):
-                    return None
-
-            rows = [
-                (
-                    r.get("program"), r.get("comments"), r.get("date_added"),
-                    r.get("url"), r.get("status"), r.get("term"),
-                    r.get("US/International"), parse_float(r.get("GPA")),
-                    parse_float(r.get("GRE")), parse_float(r.get("GRE V")),
-                    parse_float(r.get("GRE AW")), r.get("Degree"),
-                    r.get("llm-generated-program"), r.get("llm-generated-university"),
-                )
-                for r in cleaned
-            ]
-
-            INSERT_SQL = """
-                INSERT INTO applicants (
-                    program, comments, date_added, url, status, term,
-                    us_or_international, gpa, gre, gre_v, gre_aw, degree,
-                    llm_generated_program, llm_generated_university
-                ) VALUES %s
-                ON CONFLICT (url) DO NOTHING;
-            """
-            with conn.cursor() as cur:
-                extras.execute_values(cur, INSERT_SQL, rows, page_size=500)
-            conn.commit()
-            conn.close()
-            print(f"✓ Scrape complete. {len(rows)} records processed.")
-        except Exception as e:
-            print(f"Scraper/load error: {e}")
-        finally:
-            _set_busy(False)
 
     # ------------------------------------------------------------------
     # Routes
@@ -152,7 +166,14 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
                 return jsonify({"busy": True, "message": "A data pull is already in progress."}), 409
             _scrape_running = True
 
-        runner = app._loader_fn if app._loader_fn is not None else _run_scraper_default
+        db_url = app.config.get("DATABASE_URL", "")
+
+        if app._loader_fn is not None:
+            runner = app._loader_fn
+        else:
+            def runner():
+                run_scraper_pipeline(app._scraper_fn, db_url=db_url)
+
         thread = threading.Thread(target=runner, daemon=True)
         thread.start()
 
@@ -181,9 +202,6 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     return app
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     app = create_app()
     app.run(host="localhost", port=8080)
