@@ -43,7 +43,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 RAW_FILE   = Path("../module_2/raw_results.json")
-CLEAN_FILE = Path("../module_2/applicant_data.json")
+CLEAN_FILE = Path("../../module_2/applicant_data.json")
 
 # Mapping common status strings to canonical values
 _STATUS_MAP = {
