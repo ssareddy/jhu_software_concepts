@@ -64,7 +64,7 @@ def _build_search_url(page: int, per_page: int = 20) -> str:
     return urllib.parse.urljoin(BASE_URL, SEARCH_PATH) + "?" + query
 
 
-def check_robots_txt() -> bool:
+def check_robots_txt() -> bool:  # pragma: no cover
     """
     Fetch and inspect robots.txt. Returns True if /survey/ is allowed
     for a standard browser User-Agent, False otherwise.
@@ -128,7 +128,7 @@ def check_robots_txt() -> bool:
 # Selenium browser helpers
 # ---------------------------------------------------------------------------
 
-def _build_driver() -> webdriver.Chrome:
+def _build_driver() -> webdriver.Chrome:  # pragma: no cover
     """
     Instantiate a headless Chrome WebDriver.
     Uses Selenium Manager (bundled with Selenium 4.6+) to handle
@@ -147,7 +147,7 @@ def _build_driver() -> webdriver.Chrome:
     return webdriver.Chrome(options=options)
 
 
-def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> str | None:
+def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> str | None:  # pragma: no cover
     """
     Navigate to url with Selenium, wait for the page body to load,
     and return the fully rendered page source. Returns None on failure.
@@ -180,7 +180,7 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
     return None
 
 
-def _safe_quit(driver: webdriver.Chrome, timeout: int = 8) -> None:
+def _safe_quit(driver: webdriver.Chrome, timeout: int = 8) -> None:  # pragma: no cover
     """
     Quit the Selenium driver without risking a hang.
 
@@ -430,7 +430,7 @@ def _load_existing_records(output_file: Path) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> list:
+def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> list:  # pragma: no cover
     """
     Main scraping entry point.
 
@@ -543,7 +543,7 @@ def _save_raw(records: list[dict], path: Path) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import sys
 
     # Automatically resumes from where the last run stopped.

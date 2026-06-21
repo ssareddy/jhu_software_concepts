@@ -4,5 +4,3 @@ data_file = module_4/.coverage
 
 [report]
 fail_under = 100
-omit =
-    */scrape.py
