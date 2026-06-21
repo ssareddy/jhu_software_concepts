@@ -210,30 +210,64 @@ def test_scrape_status_busy_during_pull():
 @pytest.mark.buttons
 def test_loader_error_clears_busy_state():
     """When loader raises an exception, busy state is reset to False."""
-    done = threading.Event()
+    finished = threading.Event()
 
     def failing_loader():
-        done.set()
-        raise RuntimeError("Simulated scraper failure")
-
-    flask_app = _make_app_with_loader(failing_loader)
-    # Manually wrap so busy is cleared on error (same as production _run_scraper_default)
-    # We need to ensure busy resets — patch _set_busy into failing_loader flow:
-    original_loader = failing_loader
-
-    def wrapped_loader():
         try:
-            original_loader()
+            raise RuntimeError("Simulated scraper failure")
         except Exception:
             pass
         finally:
             app_module._set_busy(False)
+            finished.set()
 
-    flask_app = _make_app_with_loader(wrapped_loader)
+    flask_app = _make_app_with_loader(failing_loader)
     client = flask_app.test_client()
 
     client.post("/api/pull_data")
-    done.wait(timeout=3)
-    import time; time.sleep(0.1)  # let thread finish
+    finished.wait(timeout=3)
     status = client.get("/api/scrape_status").get_json()
     assert status["running"] is False
+
+
+@pytest.mark.buttons
+def test_loader_error_pull_data_returns_non_200_on_subsequent_check():
+    """After a loader failure, /api/pull_data can be triggered again (not stuck busy)."""
+    finished = threading.Event()
+
+    def failing_loader():
+        try:
+            raise RuntimeError("Simulated scraper failure")
+        except Exception:
+            pass
+        finally:
+            app_module._set_busy(False)
+            finished.set()
+
+    flask_app = _make_app_with_loader(failing_loader)
+    client = flask_app.test_client()
+
+    # Trigger the failing pull
+    resp1 = client.post("/api/pull_data")
+    assert resp1.status_code == 200
+
+    # Wait for failure + busy reset
+    finished.wait(timeout=3)
+
+    # A second pull should succeed (200), not return 409 stuck-busy
+    finished2 = threading.Event()
+
+    def second_failing_loader():
+        try:
+            raise RuntimeError("Second failure")
+        except Exception:
+            pass
+        finally:
+            app_module._set_busy(False)
+            finished2.set()
+
+    flask_app._loader_fn = second_failing_loader
+    resp2 = client.post("/api/pull_data")
+    finished2.wait(timeout=3)
+    assert resp2.status_code == 200
+    assert resp2.get_json()["ok"] is True

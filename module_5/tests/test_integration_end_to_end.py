@@ -247,6 +247,68 @@ def test_e2e_overlapping_data_consistent(clean_db):
 
 
 @pytest.mark.integration
+def test_e2e_analysis_page_renders_after_pull(clean_db):
+    """After pull completes, GET /analysis renders HTML with 'Answer:' labels."""
+    done = threading.Event()
+    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
+    client = flask_app.test_client()
+
+    orig_loader = flask_app._loader_fn
+
+    def waiting_loader():
+        orig_loader()
+        done.set()
+
+    flask_app._loader_fn = waiting_loader
+
+    client.post("/api/pull_data")
+    done.wait(timeout=5)
+
+    resp = client.get("/analysis")
+    assert resp.status_code == 200
+    html = resp.data
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Page must include structural markers present after data is available
+    assert b"Answer:" in html, "Rendered /analysis page missing 'Answer:' labels"
+    assert soup.find(attrs={"data-testid": "pull-data-btn"}) is not None
+    assert soup.find(attrs={"data-testid": "update-analysis-btn"}) is not None
+
+
+@pytest.mark.integration
+def test_e2e_analysis_page_reflects_api_results_after_update(clean_db):
+    """After pull + update_analysis, /api/results data keys match /analysis page structure."""
+    done = threading.Event()
+    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
+    client = flask_app.test_client()
+
+    orig_loader = flask_app._loader_fn
+
+    def waiting_loader():
+        orig_loader()
+        done.set()
+
+    flask_app._loader_fn = waiting_loader
+
+    client.post("/api/pull_data")
+    done.wait(timeout=5)
+
+    # Trigger update_analysis
+    update_resp = client.post("/api/update_analysis")
+    assert update_resp.status_code == 200
+    update_data = update_resp.get_json()["data"]
+
+    # Verify /analysis page still renders cleanly after update
+    page_resp = client.get("/analysis")
+    assert page_resp.status_code == 200
+    assert b"Analysis" in page_resp.data
+
+    # The data from update_analysis must include expected keys
+    assert "fall_2026_count" in update_data
+    assert update_data["fall_2026_count"] == len(SAMPLE_RECORDS)
+
+
+@pytest.mark.integration
 def test_e2e_busy_blocks_update_during_pull(clean_db):
     """While pull is in progress, update_analysis returns 409."""
     done = threading.Event()
