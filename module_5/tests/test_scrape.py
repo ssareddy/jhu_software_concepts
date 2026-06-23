@@ -355,7 +355,7 @@ def test_get_resume_page_corrupt_json_returns_1(tmp_path):
     """_get_resume_page returns 1 when the file contains invalid JSON."""
     from scrape import _get_resume_page
     path = tmp_path / "raw.json"
-    path.write_text("not valid json {{{{", encoding="utf-8")
+    path.write_text("{corrupt", encoding="utf-8")
     assert _get_resume_page(path) == 1
 
 
@@ -429,7 +429,7 @@ def test_load_existing_records_corrupt_returns_empty(tmp_path):
     """_load_existing_records returns [] on invalid JSON."""
     from scrape import _load_existing_records
     path = tmp_path / "raw.json"
-    path.write_text("{{not json}}", encoding="utf-8")
+    path.write_text("{corrupt", encoding="utf-8")
     assert _load_existing_records(path) == []
 
 

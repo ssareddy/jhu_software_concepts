@@ -723,7 +723,7 @@ def test_load_records_exception_in_build_row(clean_db):
     # a non-dict object inside the list
     class BadRecord:
         def get(self, key, default=None):
-            raise RuntimeError("forced error")
+            raise ValueError("forced error")
 
     inserted, skipped = load_records(clean_db, [BadRecord()])
     assert skipped == 1
