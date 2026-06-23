@@ -908,3 +908,52 @@ def test_api_update_analysis_uses_real_query_when_no_fn():
 
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
+
+@pytest.mark.db
+def test_get_filtered_results_clamps_limit(monkeypatch):
+    """get_filtered_results clamps limit between 1 and MAX_LIMIT."""
+    import query_data as qd
+    captured = {}
+
+    class FakeCursor:
+        def execute(self, stmt, params):
+            captured["params"] = params
+        def fetchall(self):
+            return []
+        def close(self):
+            pass
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+        def close(self):
+            pass
+
+    monkeypatch.setattr(qd, "_conn", lambda: FakeConn())
+    qd.get_filtered_results(term="Fall 2026", limit=9999)
+    assert captured["params"][1] == 100  # clamped to MAX_LIMIT
+
+
+@pytest.mark.db
+def test_get_filtered_results_minimum_limit(monkeypatch):
+    """get_filtered_results clamps limit to minimum of 1."""
+    import query_data as qd
+    captured = {}
+
+    class FakeCursor:
+        def execute(self, stmt, params):
+            captured["params"] = params
+        def fetchall(self):
+            return []
+        def close(self):
+            pass
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+        def close(self):
+            pass
+
+    monkeypatch.setattr(qd, "_conn", lambda: FakeConn())
+    qd.get_filtered_results(term="Fall 2026", limit=-5)
+    assert captured["params"][1] == 1  # clamped to minimum

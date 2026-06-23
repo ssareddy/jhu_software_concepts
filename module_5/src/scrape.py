@@ -383,7 +383,7 @@ def _get_resume_page(output_file: Path) -> int:
                   f"Resuming from page {resume}.")
             return resume
         return 1
-    except RuntimeError as exc:
+    except (json.JSONDecodeError, OSError) as exc:
         print(f"[scrape] Could not read {output_file}: {exc}. Starting from page 1.")
         return 1
 
@@ -411,7 +411,7 @@ def _load_existing_records(output_file: Path) -> list[dict]:
             return data
         if isinstance(data, dict) and "records" in data:
             return data["records"]
-    except RuntimeError:
+    except (json.JSONDecodeError, OSError):
         pass
     return []
 
