@@ -185,9 +185,9 @@ def load_records(conn, records: list[dict]) -> tuple[int, int]:
                 rows.append(row)
             else:
                 skipped += 1
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             skipped += 1
-            print(f"  ⚠ Skipping row due to error: {exc}")
+            print(f"  Skipping row due to error: {exc}")
 
     if not rows:
         print("No valid rows to insert.")
@@ -221,6 +221,7 @@ def load_json(conn, json_path: str) -> tuple[int, int]:
 
 
 def main():
+    """Entry point: parse CLI args, connect to DB, create table, and load JSON data."""
     default_json = os.path.join(os.path.dirname(__file__), "llm_extend_applicant_data.json")
     parser = argparse.ArgumentParser(description="Load Grad Café data into PostgreSQL.")
     parser.add_argument(
@@ -239,7 +240,7 @@ def main():
 
     try:
         conn = get_connection()
-        print(f"✓ Connected.")
+        print("Connected.")
     except psycopg2.OperationalError as exc:
         print(f"✗ Could not connect: {exc}")
         return

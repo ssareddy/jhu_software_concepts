@@ -10,15 +10,15 @@ Connection is resolved entirely from environment variables via db_config.py:
 
 or with individual variables:
 
-    DB_HOST=localhost DB_PORT=5432 DB_NAME=gradcafe DB_USER=postgres DB_PASSWORD=secret python query_data.py
+    DB_HOST=localhost DB_PORT=5432 DB_NAME=gradcafe \
+    DB_USER=postgres DB_PASSWORD=secret python query_data.py
 
 No credentials are hard-coded here.
 """
 
-import os
 import psycopg2
 
-from db_config import get_db_config, get_connection
+from db_config import get_db_config
 
 # Re-export DB_CONFIG as a mutable dict so tests can patch it without
 # touching the environment.  Always reflects the current environment at
@@ -33,6 +33,7 @@ def _conn():
 
 
 def run_queries():  # pragma: no cover
+    """Run all analysis queries and print results to stdout (CLI entry point)."""
     conn = _conn()
     cur = conn.cursor()
 
@@ -90,8 +91,7 @@ def run_queries():  # pragma: no cover
           AND us_or_international ILIKE '%american%'
           AND gpa IS NOT NULL;
     """)
-    avg_gpa_american = cur.fetchone()[0]
-    print(f"Average GPA American: {avg_gpa_american}")
+    print(f"Average GPA American: {cur.fetchone()[0]}")
 
     # Q5
     cur.execute("""
@@ -106,7 +106,7 @@ def run_queries():  # pragma: no cover
         FROM applicants
         WHERE term ILIKE '%Fall 2026%';
     """)
-    accept_count, total_fall, pct_accepted = cur.fetchone()
+    accept_count, _, pct_accepted = cur.fetchone()
     print(f"Acceptance count: {accept_count}")
     print(f"Acceptance percent: {pct_accepted}")
 
@@ -118,8 +118,7 @@ def run_queries():  # pragma: no cover
           AND status ILIKE '%accept%'
           AND gpa IS NOT NULL;
     """)
-    avg_gpa_accepted = cur.fetchone()[0]
-    print(f"Average GPA Acceptance: {avg_gpa_accepted}")
+    print(f"Average GPA Acceptance: {cur.fetchone()[0]}")
 
     # Q7
     cur.execute("""
@@ -136,8 +135,7 @@ def run_queries():  # pragma: no cover
             OR llm_generated_program ILIKE '%computer science%'
           );
     """)
-    jhu_ms_cs_count = cur.fetchone()[0]
-    print(f"JHU Masters Computer Science count: {jhu_ms_cs_count}")
+    print(f"JHU Masters Computer Science count: {cur.fetchone()[0]}")
 
     # Q8
     cur.execute("""
@@ -156,8 +154,7 @@ def run_queries():  # pragma: no cover
             OR program ILIKE '%CMU%'
           );
     """)
-    q8_scraped_count = cur.fetchone()[0]
-    print(f"Q8 (Scraped fields) - PhD CS Acceptances at top schools in 2026: {q8_scraped_count}")
+    print(f"Q8 (Scraped fields) - PhD CS Acceptances at top schools in 2026: {cur.fetchone()[0]}")
 
     # Q9
     cur.execute("""

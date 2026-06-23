@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 from bs4 import BeautifulSoup
-from selenium import webdriver
+from selenium.webdriver.chrome.webdriver import WebDriver as ChromeDriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -86,7 +86,7 @@ def check_robots_txt() -> bool:  # pragma: no cover
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             content = resp.read().decode("utf-8", errors="replace")
-    except Exception as exc:
+    except RuntimeError as exc:
         print(f"[robots.txt] Could not fetch robots.txt: {exc}")
         return False
 
@@ -128,7 +128,7 @@ def check_robots_txt() -> bool:  # pragma: no cover
 # Selenium browser helpers
 # ---------------------------------------------------------------------------
 
-def _build_driver() -> webdriver.Chrome:  # pragma: no cover
+def _build_driver() -> ChromeDriver:  # pragma: no cover
     """
     Instantiate a headless Chrome WebDriver.
     Uses Selenium Manager (bundled with Selenium 4.6+) to handle
@@ -144,10 +144,12 @@ def _build_driver() -> webdriver.Chrome:  # pragma: no cover
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
-    return webdriver.Chrome(options=options)
+    return ChromeDriver(options=options)
 
 
-def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> str | None:  # pragma: no cover
+def _get_page_source(  # pragma: no cover
+    driver: ChromeDriver, url: str, retries: int = 3
+) -> str | None:
     """
     Navigate to url with Selenium, wait for the page body to load,
     and return the fully rendered page source. Returns None on failure.
@@ -162,7 +164,7 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
             print(f"[Selenium] Attempt {attempt}/{retries + 1}: navigating to {url}")
             driver.get(url)
             # Wait for body — works regardless of exact HTML structure
-            print(f"[Selenium] Waiting for page body...")
+            print("[Selenium] Waiting for page body...")
             WebDriverWait(driver, WAIT_TIMEOUT).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -171,7 +173,7 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
             source = driver.page_source
             print(f"[Selenium] Loaded: {driver.title!r} ({len(source):,} chars)")
             return source
-        except Exception as exc:
+        except RuntimeError as exc:
             print(f"[Selenium] Attempt {attempt}/{retries + 1} failed for {url}: {exc}")
             if attempt <= retries:
                 wait = 10 * attempt  # 10s then 20s before retrying
@@ -180,7 +182,7 @@ def _get_page_source(driver: webdriver.Chrome, url: str, retries: int = 3) -> st
     return None
 
 
-def _safe_quit(driver: webdriver.Chrome, timeout: int = 8) -> None:  # pragma: no cover
+def _safe_quit(driver: ChromeDriver, timeout: int = 8) -> None:  # pragma: no cover
     """
     Quit the Selenium driver without risking a hang.
 
@@ -188,15 +190,17 @@ def _safe_quit(driver: webdriver.Chrome, timeout: int = 8) -> None:  # pragma: n
     state (rate-limited, network stalled, crashed). This helper runs quit()
     in a daemon thread so it cannot freeze the main process:
       - If quit() finishes within `timeout` seconds — clean exit.
-      - If it times out, the thread is abandoned and we fall back to
+      - If it times out, the thread is abandoned, and we fall back to
         force-killing the chromedriver subprocess via its PID.
     """
-    import threading, signal, os
+    import threading  # pylint: disable=import-outside-toplevel
+    import signal    # pylint: disable=import-outside-toplevel
+    import os as _os  # pylint: disable=import-outside-toplevel
 
     def _quit():
         try:
             driver.quit()
-        except Exception:
+        except RuntimeError:
             pass
 
     t = threading.Thread(target=_quit, daemon=True)
@@ -207,45 +211,37 @@ def _safe_quit(driver: webdriver.Chrome, timeout: int = 8) -> None:  # pragma: n
         print(f"\n[scrape] driver.quit() hung after {timeout}s — force-killing Chrome.")
         try:
             pid = driver.service.process.pid
-            os.kill(pid, signal.SIGKILL)
-        except Exception:
+            # SIGKILL forcefully terminates the process on Unix/Linux/macOS.
+            # SIGILL is used on Windows where SIGKILL is not available.
+            kill_signal = (
+                signal.SIGKILL  # pylint: disable=no-member
+                if hasattr(signal, "SIGKILL")
+                else signal.SIGILL
+            )
+            _os.kill(pid, kill_signal)
+        except RuntimeError:
             pass
 
 
+def _extract_url(summary_row) -> str:
+    """Find and return the GradCafe result URL from the row."""
+    for a_tag in summary_row.find_all("a", href=True):
+        href = a_tag["href"]
+        if "/result/" in href:
+            return href if href.startswith("http") else urllib.parse.urljoin(BASE_URL, href)
+    return ""
+
+
 def _parse_entry(summary_row, tags_row, notes_row) -> dict:
-    """
-    Extract a single applicant record from consecutive <tr> tags.
-
-    GradCafe summary rows have 4 columns:
-      col 0: School name
-      col 1: Program · DegreeType  (e.g. "Physics · PhD")
-      col 2: Date added            (e.g. "Jun 06, 2026")
-      col 3: Decision label + URL  (e.g. "Rejected on Jun 02")
-
-    tags_row and notes_row follow immediately after the summary row.
-    """
-    # ---- summary row -------------------------------------------------------
+    """Extract a single applicant record from consecutive <tr> tags."""
     cells = summary_row.find_all("td")
     if len(cells) < 3:
         return {}
 
-    raw_institution_program = cells[0].get_text(separator=" ", strip=True)
-
-    # Col 1: "Program · DegreeType" — keep combined for downstream splitting.
-    raw_degree_status = cells[1].get_text(separator=" ", strip=True) if len(cells) > 1 else ""
-
-    # Col 2: date added to GradCafe
-    raw_date = cells[2].get_text(separator=" ", strip=True) if len(cells) > 2 else ""
-
-    # Col 3: decision label — strip UI noise like "Total comments", bell icons,
-    # comment counts, and any non-decision text that GradCafe injects.
-    decision_cell = cells[3] if len(cells) > 3 else None
-    raw_decision  = ""
-    if decision_cell:
-        # The actual decision is always in an <a> or <span> with the result link
-        # or a status badge. Grab only text that matches a decision pattern.
-        full_text = decision_cell.get_text(separator=" ", strip=True)
-        # Match "Accepted/Rejected/Waitlisted/Interview [on <date>]"
+    # Extract decision, tags, and notes directly without extra assignments
+    raw_decision = ""
+    if len(cells) > 3:
+        full_text = cells[3].get_text(separator=" ", strip=True)
         m = re.search(
             r"(accepted|rejected|waitlisted|wait\s*listed|interview\w*)"
             r"(\s+on\s+[A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)?",
@@ -253,42 +249,28 @@ def _parse_entry(summary_row, tags_row, notes_row) -> dict:
         )
         raw_decision = m.group(0).strip() if m else full_text
 
-    # URL: search entire summary row for any /result/ href.
-    url = ""
-    for a_tag in summary_row.find_all("a", href=True):
-        href = a_tag["href"]
-        if "/result/" in href:
-            url = href if href.startswith("http") else urllib.parse.urljoin(BASE_URL, href)
-            break
+    if tags_row and tags_row.find("td"):
+        raw_tags = tags_row.find("td").get_text(separator="   ", strip=True)
+    else:
+        raw_tags = ""
 
-    # ---- tags row (1 cell) -------------------------------------------------
-    # Row 1: structured tokens — "Rejected on Jun 02§Fall 2026§American"
-    raw_tags = ""
-    if tags_row is not None:
-        tags_td = tags_row.find("td")
-        if tags_td:
-            raw_tags = tags_td.get_text(separator="   ", strip=True)
-
-    # ---- notes row (1 cell) ------------------------------------------------
-    # Row 2: free-text applicant comment — entirely separate row.
-    raw_notes = ""
-    if notes_row is not None:
-        notes_td = notes_row.find("td")
-        if notes_td:
-            raw_notes = notes_td.get_text(separator=" ", strip=True)
-
-    # Merge decision label + tags into a single pipe-joined string that
-    # clean.py mines for: decision date, semester, student type, GPA, GRE.
-    raw_degree_status_full = " | ".join(
-        filter(None, [raw_degree_status, raw_decision, raw_tags])
-    )
+    if notes_row and notes_row.find("td"):
+        raw_notes = notes_row.find("td").get_text(separator=" ", strip=True)
+    else:
+        raw_notes = ""
 
     return {
-        "raw_institution_program": raw_institution_program,
-        "raw_degree_status":       raw_degree_status_full,
-        "raw_date":                raw_date,
-        "raw_notes":               raw_notes,
-        "url":                     url,
+        "raw_institution_program": cells[0].get_text(separator=" ", strip=True),
+        "raw_degree_status": " | ".join(
+            filter(None, [
+                cells[1].get_text(separator=" ", strip=True) if len(cells) > 1 else "",
+                raw_decision,
+                raw_tags
+            ])
+        ),
+        "raw_date": cells[2].get_text(separator=" ", strip=True) if len(cells) > 2 else "",
+        "raw_notes": raw_notes,
+        "url": _extract_url(summary_row),
     }
 
 
@@ -346,8 +328,16 @@ def _parse_page(html: str) -> list[dict]:
                 and not r.find("a", href=re.compile(r"/result/", re.I))
             )
 
-        tags_row  = data_rows[i + 1] if (i + 1) < len(data_rows) and _is_detail(data_rows[i + 1]) else None
-        notes_row = data_rows[i + 2] if (i + 2) < len(data_rows) and _is_detail(data_rows[i + 2]) else None
+        tags_row = (
+            data_rows[i + 1]
+            if (i + 1) < len(data_rows) and _is_detail(data_rows[i + 1])
+            else None
+        )
+        notes_row = (
+            data_rows[i + 2]
+            if (i + 2) < len(data_rows) and _is_detail(data_rows[i + 2])
+            else None
+        )
 
         # Only consume rows that are actually detail rows
         consumed = 1
@@ -393,7 +383,7 @@ def _get_resume_page(output_file: Path) -> int:
                   f"Resuming from page {resume}.")
             return resume
         return 1
-    except Exception as exc:
+    except RuntimeError as exc:
         print(f"[scrape] Could not read {output_file}: {exc}. Starting from page 1.")
         return 1
 
@@ -421,7 +411,7 @@ def _load_existing_records(output_file: Path) -> list[dict]:
             return data
         if isinstance(data, dict) and "records" in data:
             return data["records"]
-    except Exception:
+    except RuntimeError:
         pass
     return []
 
@@ -430,7 +420,9 @@ def _load_existing_records(output_file: Path) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1) -> list:  # pragma: no cover
+def scrape_data(  # pragma: no cover
+    max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1
+) -> list:
     """
     Main scraping entry point.
 
