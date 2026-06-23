@@ -1,0 +1,123 @@
+name: Module 5 CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  pylint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r module_5/requirements.txt
+
+      - name: Run Pylint
+        run: |
+          pylint module_5/src/app.py module_5/src/clean.py module_5/src/db_config.py \
+            module_5/src/load_data.py module_5/src/query_data.py module_5/src/scrape.py \
+            --fail-under=10
+
+  dependency-graph:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Graphviz
+        run: sudo apt-get install -y graphviz
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r module_5/requirements.txt
+
+      - name: Generate dependency graph
+        run: |
+          cd module_5
+          pydeps src/app.py --noshow -T svg -o dependency.svg
+
+      - name: Verify dependency.svg exists
+        run: |
+          test -f module_5/dependency.svg && echo "dependency.svg generated successfully" || exit 1
+
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Snyk dependency scan
+        uses: snyk/actions/python@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --file=module_5/requirements.txt
+
+  pytest:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gradcafe_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gradcafe_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r module_5/requirements.txt
+
+      - name: Run pytest suite with coverage
+        run: |
+          pytest module_5/tests \
+            -m "web or buttons or analysis or db or integration" \
+            --cov=module_5/src \
+            --cov-report=term-missing \
+            --cov-fail-under=100 \
+            -q
+
+      - name: Save coverage summary
+        run: |
+          pytest module_5/tests \
+            -m "web or buttons or analysis or db or integration" \
+            --cov=module_5/src \
+            --cov-report=term-missing \
+            -q 2>&1 | tee module_5/coverage_summary.txt
