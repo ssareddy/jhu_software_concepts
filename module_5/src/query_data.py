@@ -15,9 +15,9 @@ or with individual variables:
 
 No credentials are hard-coded here.
 """
-
 import psycopg2
 
+from psycopg2 import sql
 from db_config import get_db_config
 
 # Re-export DB_CONFIG as a mutable dict so tests can patch it without
@@ -25,11 +25,38 @@ from db_config import get_db_config
 # import time; tests that need a different DB should set DATABASE_URL
 # before importing, or patch db_config.get_db_config directly.
 DB_CONFIG = get_db_config()
-
+MAX_LIMIT = 100
 
 def _conn():
     """Open a connection using the current DB_CONFIG (patchable by tests)."""
     return psycopg2.connect(**DB_CONFIG)
+
+
+def get_filtered_results(term: str = "Fall 2026", limit: int = 100) -> list:
+    """
+    Return applicants filtered by term using safe psycopg2 SQL composition.
+    Demonstrates sql.SQL, sql.Identifier, and parameter binding.
+    Limit is clamped between 1 and MAX_LIMIT to prevent abuse.
+    """
+    limit = max(1, min(int(limit), MAX_LIMIT))
+    stmt = sql.SQL(
+        "SELECT {fields} FROM {table} WHERE term ILIKE %s LIMIT %s"
+    ).format(
+        fields=sql.SQL(", ").join([
+            sql.Identifier("program"),
+            sql.Identifier("status"),
+            sql.Identifier("term"),
+            sql.Identifier("gpa"),
+        ]),
+        table=sql.Identifier("applicants"),
+    )
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(stmt, (f"%{term}%", limit))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
 
 def run_queries():  # pragma: no cover
@@ -38,7 +65,7 @@ def run_queries():  # pragma: no cover
     cur = conn.cursor()
 
     # Q1
-    cur.execute("SELECT COUNT(*) FROM applicants WHERE term ILIKE '%Fall 2026%';")
+    cur.execute("SELECT COUNT(*) FROM applicants WHERE term ILIKE '%Fall 2026%' LIMIT 1;")
     fall_2026_count = cur.fetchone()[0]
     print(f"Applicant count: {fall_2026_count}")
 
@@ -57,7 +84,7 @@ def run_queries():  # pragma: no cover
                               AND us_or_international NOT ILIKE '%other%') AS intl_count,
             COUNT(*) FILTER (WHERE us_or_international ILIKE '%american%') AS us_count,
             COUNT(*) FILTER (WHERE us_or_international ILIKE '%other%') AS other_count
-        FROM applicants;
+        FROM applicants LIMIT 1;
     """)
     row = cur.fetchone()
     pct_intl, intl_count, us_count, other_count = row
@@ -77,7 +104,7 @@ def run_queries():  # pragma: no cover
         WHERE gpa IS NOT NULL
            OR gre IS NOT NULL
            OR gre_v IS NOT NULL
-           OR gre_aw IS NOT NULL;
+           OR gre_aw IS NOT NULL LIMIT 1;
     """)
     avg_gpa, avg_gre, avg_gre_v, avg_gre_aw = cur.fetchone()
     print(f"Average GPA: {avg_gpa}, Average GRE: {avg_gre}, "
@@ -89,7 +116,7 @@ def run_queries():  # pragma: no cover
         FROM applicants
         WHERE term ILIKE '%Fall 2026%'
           AND us_or_international ILIKE '%american%'
-          AND gpa IS NOT NULL;
+          AND gpa IS NOT NULL LIMIT 1;
     """)
     print(f"Average GPA American: {cur.fetchone()[0]}")
 
@@ -104,7 +131,7 @@ def run_queries():  # pragma: no cover
                 2
             ) AS pct_accepted
         FROM applicants
-        WHERE term ILIKE '%Fall 2026%';
+        WHERE term ILIKE '%Fall 2026%' LIMIT 1;
     """)
     accept_count, _, pct_accepted = cur.fetchone()
     print(f"Acceptance count: {accept_count}")
@@ -116,7 +143,7 @@ def run_queries():  # pragma: no cover
         FROM applicants
         WHERE term ILIKE '%Fall 2026%'
           AND status ILIKE '%accept%'
-          AND gpa IS NOT NULL;
+          AND gpa IS NOT NULL LIMIT 1;
     """)
     print(f"Average GPA Acceptance: {cur.fetchone()[0]}")
 
@@ -133,7 +160,7 @@ def run_queries():  # pragma: no cover
           AND (
             program ILIKE '%computer science%'
             OR llm_generated_program ILIKE '%computer science%'
-          );
+          ) LIMIT 1;
     """)
     print(f"JHU Masters Computer Science count: {cur.fetchone()[0]}")
 
@@ -152,7 +179,7 @@ def run_queries():  # pragma: no cover
             OR program ILIKE '%Stanford%'
             OR program ILIKE '%Carnegie Mellon%'
             OR program ILIKE '%CMU%'
-          );
+          ) LIMIT 1;
     """)
     print(f"Q8 (Scraped fields) - PhD CS Acceptances at top schools in 2026: {cur.fetchone()[0]}")
 
@@ -171,7 +198,7 @@ def run_queries():  # pragma: no cover
             OR llm_generated_university ILIKE '%Stanford%'
             OR llm_generated_university ILIKE '%Carnegie Mellon%'
             OR llm_generated_university ILIKE '%CMU%'
-          );
+          ) LIMIT 1;
     """)
     q9_llm_count = cur.fetchone()[0]
     print(f"Q9 (LLM fields) - PhD CS Acceptances at top schools in 2026: {q9_llm_count}")
@@ -190,7 +217,7 @@ def run_queries():  # pragma: no cover
         WHERE term ILIKE '%Fall 2026%'
           AND gpa IS NOT NULL
         GROUP BY degree_type
-        ORDER BY avg_gpa DESC;
+        ORDER BY avg_gpa DESC LIMIT 100;
     """)
     print("\nCustom Q10: Average GPA by Degree Type (Fall 2026)")
     for row in cur.fetchall():
@@ -216,7 +243,7 @@ def run_queries():  # pragma: no cover
           )
           AND us_or_international IS NOT NULL
         GROUP BY us_or_international
-        ORDER BY accept_rate DESC;
+        ORDER BY accept_rate DESC LIMIT 100;
     """)
     print("\nCustom Q11: PhD CS Fall 2026 Acceptance Rate by Nationality")
     for row in cur.fetchall():
@@ -239,7 +266,7 @@ def get_all_results() -> dict:
     cur = conn.cursor()
     results = {}
 
-    cur.execute("SELECT COUNT(*) FROM applicants WHERE term ILIKE '%Fall 2026%';")
+    cur.execute("SELECT COUNT(*) FROM applicants WHERE term ILIKE '%Fall 2026%' LIMIT 1;")
     results["fall_2026_count"] = cur.fetchone()[0]
 
     cur.execute("""
@@ -248,7 +275,7 @@ def get_all_results() -> dict:
                                             AND us_or_international NOT ILIKE '%american%'
                                             AND us_or_international NOT ILIKE '%other%')
                   / NULLIF(COUNT(*), 0), 2)
-        FROM applicants;
+        FROM applicants LIMIT 1;
     """)
     results["pct_international"] = float(cur.fetchone()[0] or 0)
 
@@ -259,7 +286,7 @@ def get_all_results() -> dict:
             ROUND(AVG(CASE WHEN gre_v BETWEEN 130 AND 170 THEN gre_v END)::numeric, 2),
             ROUND(AVG(CASE WHEN gre_aw BETWEEN 0 AND 6 THEN gre_aw END)::numeric,2)
         FROM applicants
-        WHERE gpa IS NOT NULL OR gre IS NOT NULL OR gre_v IS NOT NULL OR gre_aw IS NOT NULL;
+        WHERE gpa IS NOT NULL OR gre IS NOT NULL OR gre_v IS NOT NULL OR gre_aw IS NOT NULL LIMIT 1;
     """)
     r = cur.fetchone()
     results["avg_gpa"]    = float(r[0] or 0)
@@ -272,7 +299,7 @@ def get_all_results() -> dict:
         FROM applicants
         WHERE term ILIKE '%Fall 2026%'
           AND us_or_international ILIKE '%american%'
-          AND gpa IS NOT NULL;
+          AND gpa IS NOT NULL LIMIT 1;
     """)
     results["avg_gpa_american"] = float(cur.fetchone()[0] or 0)
 
@@ -281,7 +308,7 @@ def get_all_results() -> dict:
             ROUND(100.0 * COUNT(*) FILTER (WHERE status ILIKE '%accept%')
                   / NULLIF(COUNT(*), 0), 2)
         FROM applicants
-        WHERE term ILIKE '%Fall 2026%';
+        WHERE term ILIKE '%Fall 2026%' LIMIT 1;
     """)
     results["pct_accepted_fall_2026"] = float(cur.fetchone()[0] or 0)
 
@@ -290,7 +317,7 @@ def get_all_results() -> dict:
         FROM applicants
         WHERE term ILIKE '%Fall 2026%'
           AND status ILIKE '%accept%'
-          AND gpa IS NOT NULL;
+          AND gpa IS NOT NULL LIMIT 1;
     """)
     results["avg_gpa_accepted"] = float(cur.fetchone()[0] or 0)
 
@@ -299,7 +326,7 @@ def get_all_results() -> dict:
         WHERE (program ILIKE '%Johns Hopkins%' OR program ILIKE '%JHU%'
                OR llm_generated_university ILIKE '%Johns Hopkins%')
           AND degree ILIKE '%master%'
-          AND (program ILIKE '%computer science%' OR llm_generated_program ILIKE '%computer science%');
+          AND (program ILIKE '%computer science%' OR llm_generated_program ILIKE '%computer science%') LIMIT 1;
     """)
     results["jhu_ms_cs_count"] = cur.fetchone()[0]
 
@@ -309,7 +336,7 @@ def get_all_results() -> dict:
           AND program ILIKE '%computer science%'
           AND (program ILIKE '%Georgetown%' OR program ILIKE '%Massachusetts Institute%'
                OR program ILIKE '%MIT%' OR program ILIKE '%Stanford%'
-               OR program ILIKE '%Carnegie Mellon%' OR program ILIKE '%CMU%');
+               OR program ILIKE '%Carnegie Mellon%' OR program ILIKE '%CMU%') LIMIT 1;
     """)
     results["q8_scraped"] = cur.fetchone()[0]
 
@@ -322,7 +349,7 @@ def get_all_results() -> dict:
                OR llm_generated_university ILIKE '%MIT%'
                OR llm_generated_university ILIKE '%Stanford%'
                OR llm_generated_university ILIKE '%Carnegie Mellon%'
-               OR llm_generated_university ILIKE '%CMU%');
+               OR llm_generated_university ILIKE '%CMU%') LIMIT 1;
     """)
     results["q9_llm"] = cur.fetchone()[0]
 
@@ -335,7 +362,7 @@ def get_all_results() -> dict:
             COUNT(*) AS total
         FROM applicants
         WHERE term ILIKE '%Fall 2026%' AND gpa IS NOT NULL
-        GROUP BY degree_type ORDER BY avg_gpa DESC;
+        GROUP BY degree_type ORDER BY avg_gpa DESC LIMIT 100;
     """)
     results["q10_degree_gpa"] = [
         {"degree_type": r[0], "avg_gpa": float(r[1] or 0), "count": r[2]}
@@ -352,7 +379,7 @@ def get_all_results() -> dict:
         WHERE term ILIKE '%Fall 2026%' AND degree ILIKE '%ph%'
           AND (program ILIKE '%computer science%' OR llm_generated_program ILIKE '%computer science%')
           AND us_or_international IS NOT NULL
-        GROUP BY us_or_international ORDER BY accept_rate DESC;
+        GROUP BY us_or_international ORDER BY accept_rate DESC LIMIT 100;
     """)
     results["q11_nationality_acceptance"] = [
         {"nationality": r[0], "total": r[1], "accepted": r[2], "rate": float(r[3] or 0)}
