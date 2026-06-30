@@ -17,7 +17,7 @@ import app as app_module
 
 def _make_app_with_loader(loader_fn, query_fn=None):
     """Create a fresh test app with an injected loader."""
-    app_module._scrape_running = False
+    app_module._busy.set(False)
 
     def _default_query():
         return {
@@ -48,7 +48,7 @@ def test_pull_data_returns_200_when_not_busy():
 
     def fake_loader():
         event.wait(timeout=5)
-        app_module._set_busy(False)
+        app_module._busy.set(False)
 
     flask_app = _make_app_with_loader(fake_loader)
     client = flask_app.test_client()
@@ -68,7 +68,7 @@ def test_pull_data_triggers_loader():
     def fake_loader():
         called.append(True)
         done.set()
-        app_module._set_busy(False)
+        app_module._busy.set(False)
 
     flask_app = _make_app_with_loader(fake_loader)
     client = flask_app.test_client()
@@ -84,7 +84,7 @@ def test_pull_data_returns_409_when_busy():
 
     def slow_loader():
         done.wait(timeout=5)
-        app_module._set_busy(False)
+        app_module._busy.set(False)
 
     flask_app = _make_app_with_loader(slow_loader)
     client = flask_app.test_client()
@@ -128,7 +128,7 @@ def test_update_analysis_returns_409_when_busy():
 
     def slow_loader():
         done.wait(timeout=5)
-        app_module._set_busy(False)
+        app_module._busy.set(False)
 
     flask_app = _make_app_with_loader(slow_loader)
     client = flask_app.test_client()
@@ -150,7 +150,7 @@ def test_update_analysis_does_not_update_when_busy():
 
     def slow_loader():
         done.wait(timeout=5)
-        app_module._set_busy(False)
+        app_module._busy.set(False)
 
     def counting_query():
         call_count.append(1)
@@ -192,7 +192,7 @@ def test_scrape_status_busy_during_pull():
 
     def slow_loader():
         done.wait(timeout=5)
-        app_module._set_busy(False)
+        app_module._busy.set(False)
 
     flask_app = _make_app_with_loader(slow_loader)
     client = flask_app.test_client()
@@ -218,7 +218,7 @@ def test_loader_error_clears_busy_state():
         except Exception:
             pass
         finally:
-            app_module._set_busy(False)
+            app_module._busy.set(False)
             finished.set()
 
     flask_app = _make_app_with_loader(failing_loader)
@@ -241,7 +241,7 @@ def test_loader_error_pull_data_returns_non_200_on_subsequent_check():
         except Exception:
             pass
         finally:
-            app_module._set_busy(False)
+            app_module._busy.set(False)
             finished.set()
 
     flask_app = _make_app_with_loader(failing_loader)
@@ -263,10 +263,10 @@ def test_loader_error_pull_data_returns_non_200_on_subsequent_check():
         except Exception:
             pass
         finally:
-            app_module._set_busy(False)
+            app_module._busy.set(False)
             finished2.set()
 
-    flask_app._loader_fn = second_failing_loader
+    flask_app.config["LOADER_FN"] = second_failing_loader
     resp2 = client.post("/api/pull_data")
     finished2.wait(timeout=3)
     assert resp2.status_code == 200

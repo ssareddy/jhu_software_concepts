@@ -10,10 +10,12 @@ Workflow:
   3. BeautifulSoup / regex / string methods parse the rendered HTML.
   4. Raw records are passed to clean.py for structuring.
 """
-
-import json
+import os
 import re
 import time
+import json
+import signal
+import threading
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -193,9 +195,6 @@ def _safe_quit(driver: ChromeDriver, timeout: int = 8) -> None:  # pragma: no co
       - If it times out, the thread is abandoned, and we fall back to
         force-killing the chromedriver subprocess via its PID.
     """
-    import threading  # pylint: disable=import-outside-toplevel
-    import signal    # pylint: disable=import-outside-toplevel
-    import os as _os  # pylint: disable=import-outside-toplevel
 
     def _quit():
         try:
@@ -213,12 +212,8 @@ def _safe_quit(driver: ChromeDriver, timeout: int = 8) -> None:  # pragma: no co
             pid = driver.service.process.pid
             # SIGKILL forcefully terminates the process on Unix/Linux/macOS.
             # SIGILL is used on Windows where SIGKILL is not available.
-            kill_signal = (
-                signal.SIGKILL  # pylint: disable=no-member
-                if hasattr(signal, "SIGKILL")
-                else signal.SIGILL
-            )
-            _os.kill(pid, kill_signal)
+            kill_signal = getattr(signal, "SIGKILL", signal.SIGILL)
+            os.kill(pid, kill_signal)
         except RuntimeError:
             pass
 

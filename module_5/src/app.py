@@ -19,23 +19,42 @@ import psycopg2
 import psycopg2.extras as pg_extras
 from flask import Flask, jsonify, render_template
 
+from clean import clean_data
+from db_config import get_connection
+from query_data import get_all_results
+from scrape import scrape_data
+
+
 # ---------------------------------------------------------------------------
 # Thread-safe busy state
 # ---------------------------------------------------------------------------
-_scrape_lock = threading.Lock()
-_SCRAPE_RUNNING = False
+
+class _BusyState:
+    """Thread-safe container for the scrape-running flag."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._running = False
+
+    def set(self, val: bool) -> None:
+        """Set the running flag."""
+        with self._lock:
+            self._running = val
+
+    def get(self) -> bool:
+        """Return the current running flag."""
+        return self._running
+
+    def acquire(self) -> bool:
+        """Set to True if not already running. Returns True if acquired."""
+        with self._lock:
+            if self._running:
+                return False
+            self._running = True
+            return True
 
 
-def _set_busy(val: bool) -> None:
-    """Set the global scrape-running flag inside the lock."""
-    global _SCRAPE_RUNNING  # pylint: disable=global-statement
-    with _scrape_lock:
-        _SCRAPE_RUNNING = val
-
-
-def is_busy() -> bool:
-    """Return True if a scrape is currently in progress."""
-    return _SCRAPE_RUNNING
+_busy = _BusyState()
 
 
 def _parse_float(val):
@@ -57,7 +76,6 @@ def _build_connection(db_url: str):
             user=parsed.username,
             password=parsed.password or "",
         )
-    from db_config import get_connection  # pylint: disable=import-outside-toplevel
     return get_connection()
 
 
@@ -79,14 +97,11 @@ def run_scraper_pipeline(scraper_fn, db_url=""):
         if scraper_fn is not None:
             raw_records = scraper_fn()
         else:
-            from scrape import scrape_data  # pragma: no cover  # pylint: disable=import-outside-toplevel
             raw_records = scrape_data(  # pragma: no cover
                 max_pages=10, output_file=None, start_page=1
             )
 
-        from clean import clean_data  # pylint: disable=import-outside-toplevel
         cleaned = clean_data(raw_records)
-
         conn = _build_connection(db_url)
 
         rows = [
@@ -114,17 +129,16 @@ def run_scraper_pipeline(scraper_fn, db_url=""):
         conn.commit()
         conn.close()
         print(f"Scrape complete. {len(rows)} records processed.")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (psycopg2.DatabaseError, OSError, ValueError, RuntimeError) as exc:
         print(f"Scraper/load error: {exc}")
     finally:
-        _set_busy(False)
+        _busy.set(False)
 
 
 def _get_query_fn(flask_app):
     """Resolve the query function from injection or the real module."""
     fn = flask_app.config.get("QUERY_FN")
     if fn is None:
-        from query_data import get_all_results  # pylint: disable=import-outside-toplevel
         fn = get_all_results
     return fn
 
@@ -148,11 +162,6 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     flask_app.config["LOADER_FN"] = loader_fn
     flask_app.config["QUERY_FN"] = query_fn
 
-    # Keep underscore attributes for backwards-compat with existing tests
-    flask_app._scraper_fn = scraper_fn  # pylint: disable=protected-access
-    flask_app._loader_fn = loader_fn    # pylint: disable=protected-access
-    flask_app._query_fn = query_fn      # pylint: disable=protected-access
-
     # ------------------------------------------------------------------
     # Routes
     # ------------------------------------------------------------------
@@ -173,19 +182,16 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
         try:
             data = _get_query_fn(flask_app)()
             return jsonify({"status": "ok", "data": data})
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except (psycopg2.DatabaseError, OSError, RuntimeError) as exc:
             return jsonify({"status": "error", "message": str(exc)}), 500
 
     @flask_app.route("/api/pull_data", methods=["POST"])
     def api_pull_data():
         """Trigger scraper. Returns 409 if already running."""
-        global _SCRAPE_RUNNING  # pylint: disable=global-statement
-        with _scrape_lock:
-            if _SCRAPE_RUNNING:
-                return jsonify(
-                    {"busy": True, "message": "A data pull is already in progress."}
-                ), 409
-            _SCRAPE_RUNNING = True
+        if not _busy.acquire():
+            return jsonify(
+                {"busy": True, "message": "A data pull is already in progress."}
+            ), 409
 
         db_url = flask_app.config.get("DATABASE_URL", "")
         active_loader = flask_app.config.get("LOADER_FN")
@@ -206,18 +212,18 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     @flask_app.route("/api/update_analysis", methods=["POST"])
     def api_update_analysis():
         """Refresh analysis. Returns 409 if a pull is in progress."""
-        if is_busy():
+        if _busy.get():
             return jsonify({"busy": True, "message": "Pull in progress."}), 409
         try:
             data = _get_query_fn(flask_app)()
             return jsonify({"ok": True, "data": data})
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except (psycopg2.DatabaseError, OSError, RuntimeError) as exc:
             return jsonify({"status": "error", "message": str(exc)}), 500
 
     @flask_app.route("/api/scrape_status")
     def api_scrape_status():
         """Return whether a scrape is currently running."""
-        return jsonify({"running": is_busy()})
+        return jsonify({"running": _busy.get()})
 
     return flask_app
 
