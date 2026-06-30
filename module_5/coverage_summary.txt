@@ -1,16 +1,12 @@
-﻿........................................................................ [ 47%]
-........................................................................ [ 95%]
-.......                                                                  [100%]
-=============================== tests coverage ================================
-_______________ coverage: platform win32, python 3.13.5-final-0 _______________
-
-Name                         Stmts   Miss  Cover   Missing
+﻿Name                         Stmts   Miss  Cover   Missing
 ----------------------------------------------------------
-module_4\src\app.py             96      0   100%
-module_4\src\clean.py          174      0   100%
-module_4\src\db_config.py       12      0   100%
-module_4\src\load_data.py       82      0   100%
-module_4\src\query_data.py      39      0   100%
+module_5\src\app.py            106      0   100%
+module_5\src\clean.py          175      0   100%
+module_5\src\db_config.py       12      0   100%
+module_5\src\load_data.py       82      0   100%
+module_5\src\query_data.py      50      0   100%
+module_5\src\scrape.py         122      0   100%
 ----------------------------------------------------------
-TOTAL                          403      0   100%
+TOTAL                          547      0   100%
 Required test coverage of 100% reached. Total coverage: 100.00%
+190 passed in 3.04s
