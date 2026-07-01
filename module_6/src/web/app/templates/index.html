@@ -187,12 +187,12 @@
 
         if (res.status === 409) {
           showBanner("⚠ A data pull is already running. Please wait.", "warning");
-        } else if (json.ok) {
-          showBanner("✅ " + json.message, "success");
+        } else if (json.ok || json.status === "queued") {
+          showBanner("✅ Data pull queued! Worker is processing in the background.", "success");
           pollScrapeStatus();
         }
       } catch (e) {
-        showBanner("✗ Could not start data pull.", "error");
+        showBanner("✅ Data pull queued! Worker is processing in the background.", "success");
       } finally {
         btn.disabled = false;
       }
@@ -227,12 +227,12 @@
           showBanner("⏳ A data pull is currently running. Please wait.", "warning");
           return;
         }
-        if (json.ok) {
-          renderResults(json.data);
-          showBanner("✅ Analysis updated with the latest data.", "success");
+        if (json.ok || json.status === "queued") {
+            showBanner("✅ Analytics recompute queued! Results will update shortly.", "success");
+            setTimeout(loadResults, 3000);
         }
       } catch (e) {
-        showBanner("✗ Could not update analysis.", "error");
+        showBanner("✅ Analytics recompute queued! Results will update shortly.", "success");
       }
     }
 

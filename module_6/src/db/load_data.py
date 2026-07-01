@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 """
 load_data.py
 ------------
@@ -25,7 +26,7 @@ import argparse
 import psycopg2
 from psycopg2 import extras
 
-from module_6.src.web.app.db_config import get_db_config, get_connection
+from db_config import get_db_config, get_connection
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -222,7 +223,8 @@ def load_json(conn, json_path: str) -> tuple[int, int]:
 
 def main():
     """Entry point: parse CLI args, connect to DB, create table, and load JSON data."""
-    default_json = os.path.join(os.path.dirname(__file__), "llm_extend_applicant_data.json")
+    default_json = os.path.join(os.path.dirname(__file__),
+                                "..", "data", "llm_extend_applicant_data.json")
     parser = argparse.ArgumentParser(description="Load Grad Café data into PostgreSQL.")
     parser.add_argument(
         "--json",
