@@ -135,7 +135,9 @@ Copy `.env.example` to `.env` and fill in your credentials. Never commit `.env`.
 | `FLASK_ENV` | Flask environment (`development` / `production`) |
 | `SEED_JSON` | Path to JSON data file inside worker container |
 
-**Important:** When running `load_data.py` from your host machine, use `localhost:5433` (the exposed port). Inside Docker containers, services communicate using their service names (`db:5432`, `rabbitmq:5672`).
+**Important:** When running `load_data.py` from your host machine, use `localhost:5433`
+(the exposed port). Inside Docker containers, services communicate using their service
+names (`db:5432`, `rabbitmq:5672`).
 
 ---
 
@@ -154,7 +156,8 @@ Copy `.env.example` to `.env` and fill in your credentials. Never commit `.env`.
 | `recompute_analytics` | `handle_recompute_analytics` | Refreshes materialized views, re-runs queries |
 
 ### Watermark Table
-The `ingestion_watermarks` table tracks the last seen record per source, enabling incremental/idempotent loads:
+The `ingestion_watermarks` table tracks the last seen record per source, enabling
+incremental/idempotent loads:
 ```sql
 CREATE TABLE ingestion_watermarks (
     source     TEXT PRIMARY KEY,
@@ -167,13 +170,23 @@ CREATE TABLE ingestion_watermarks (
 
 ## Running Pylint
 
-From inside `module_6/`:
+Set the Python path first so Pylint can resolve internal imports:
+
 ```bash
-pylint src/web/app/app.py src/web/publisher.py \
-  src/worker/consumer.py src/worker/etl/query_data.py \
-  src/worker/etl/clean.py src/worker/etl/db_config.py \
-  src/db/load_data.py \
-  --rcfile=.pylintrc --fail-under=10
+# Linux / macOS
+export PYTHONPATH="module_6/src/web:module_6/src/web/app:module_6/src/worker:module_6/src/worker/etl:module_6/src/db"
+
+# Windows (PowerShell)
+$env:PYTHONPATH="module_6/src/web;module_6/src/web/app;module_6/src/worker;module_6/src/worker/etl;module_6/src/db"
+```
+
+Then run from the **repo root**:
+```bash
+pylint module_6/src/web/app/app.py module_6/src/web/publisher.py \
+  module_6/src/worker/consumer.py module_6/src/worker/etl/query_data.py \
+  module_6/src/worker/etl/clean.py module_6/src/worker/etl/db_config.py \
+  module_6/src/db/load_data.py \
+  --rcfile=module_6/.pylintrc --fail-under=10
 ```
 
 Expected: `Your code has been rated at 10.00/10`
@@ -239,9 +252,9 @@ test environment.
 
 ## GitHub Actions CI
 
-Workflow: `.github/workflows/ci.yml`
+Workflow: `.github/workflows/module_6_ci.yml`
 
-The pipeline runs on every push and PR with two jobs:
+The pipeline runs on every push and PR touching `module_6/**` with two jobs:
 1. **pylint** — runs Pylint on all module_6 source files, fails if score < 10
 2. **pytest** — runs full test suite with 100% coverage enforcement against PostgreSQL 16
 
@@ -259,3 +272,4 @@ See `actions_success.png` for proof of a green run.
 - `.env` is excluded from version control via `.gitignore`
 - Docker images publicly available at `scharfshutzer/module_6`
 - Database schema is auto-initialized via `db/init.sql` on first `docker compose up`
+- DB exposed on port 5433 externally to avoid conflict with local PostgreSQL on 5432
