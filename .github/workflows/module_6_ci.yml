@@ -31,6 +31,7 @@ jobs:
 
       - name: Run Pylint
         run: |
+          PYTHONPATH=module_6/src/web:module_6/src/web/app:module_6/src/worker:module_6/src/worker/etl:module_6/src/db \
           pylint module_6/src/web/app/app.py module_6/src/web/publisher.py \
             module_6/src/worker/consumer.py module_6/src/worker/etl/query_data.py \
             module_6/src/worker/etl/clean.py module_6/src/worker/etl/db_config.py \
