@@ -1,338 +1,239 @@
-# Module 5 — Grad Café Analytics: Software Assurance & Security
+# Module 6 — Grad Café Analytics: Microservice Architecture
 
-A test-driven, documented Grad Café data analytics service covering scraping,
-ETL, PostgreSQL storage, and a Flask analysis dashboard — hardened against SQL
-injection, statically analyzed with Pylint, dependency-scanned with Snyk, and
-shipped with a reproducible environment via pip and uv.
+A production-like microservice version of the Grad Café analytics service,
+refactored from Module 5 into four containerized services orchestrated via
+Docker Compose: a Flask web app, a Python worker, PostgreSQL, and RabbitMQ.
 
 ---
 
-## Project Structure
+## Architecture Overview
 
 ```
-module_5/
-├── src/                                   # Application code
-│   ├── db_config.py                       # Unified DB connection (env-var driven)
-│   ├── app.py                             # Flask app (create_app factory)
-│   ├── scrape.py                          # Selenium/BeautifulSoup scraper
-│   ├── clean.py                           # ETL data cleaner
-│   ├── load_data.py                       # PostgreSQL loader
-│   ├── query_data.py                      # Analysis queries (psycopg2 sql composition)
-│   ├── templates/
-│   │   └── index.html                     # Analysis dashboard
-│   └── static/
-│       └── style.css
-├── tests/
-│   ├── conftest.py                        # Shared fixtures & DB helpers
-│   ├── test_flask_page.py                 # Web / page render tests
-│   ├── test_buttons.py                    # Button endpoint & busy-state tests
-│   ├── test_analysis_format.py            # Analysis label/percentage tests
-│   ├── test_db_insert.py                  # DB schema / insert / query tests
-│   ├── test_integration_end_to_end.py     # End-to-end flows (pull → update → render)
-│   ├── test_coverage.py                   # Branch coverage for all src modules
-│   └── test_scrape.py                     # Pure/non-Selenium scrape helper tests
-├── docs/
-│   ├── Makefile                           # Run `make html` to build
-│   └── source/
-│       ├── conf.py                        # Sphinx configuration
-│       ├── index.rst                      # Table of contents root
-│       ├── overview.rst                   # Setup & environment variables
-│       ├── architecture.rst               # Web / ETL / DB layer descriptions
-│       ├── api_reference.rst              # Autodoc for all src modules
-│       ├── testing_guide.rst              # Markers, fixtures, selectors
-│       ├── operational_notes.rst          # Busy-state, idempotency, troubleshooting
-│       ├── _static/                       # Custom static assets (can be empty)
-│       └── _templates/                    # Custom Sphinx templates (can be empty)
-├── .github/workflows/ci.yml              # GitHub Actions CI pipeline
-├── .coveragerc                            # Coverage config
-├── .env.example                           # Environment variable template (no secrets)
+module_6/
+├── docker-compose.yml                     # Defines all 4 services
+├── db/
+│   └── init.sql                           # DB schema auto-initialized on start
+├── src/
+│   ├── web/                               # Flask web service
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   ├── run.py                         # Flask entrypoint (0.0.0.0:8080)
+│   │   ├── publisher.py                   # RabbitMQ publisher
+│   │   └── app/
+│   │       ├── app.py                     # Flask app factory
+│   │       ├── clean.py                   # ETL data cleaner
+│   │       ├── db_config.py               # DB connection config
+│   │       ├── query_data.py              # Analysis queries
+│   │       └── templates/index.html       # Analysis dashboard
+│   ├── worker/                            # Python worker service
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   ├── consumer.py                    # RabbitMQ consumer (acks, prefetch=1)
+│   │   └── etl/
+│   │       ├── incremental_scraper.py     # Selenium scraper
+│   │       ├── clean.py                   # ETL data cleaner
+│   │       ├── db_config.py               # DB connection config
+│   │       └── query_data.py              # Analysis queries
+│   ├── db/
+│   │   └── load_data.py                   # JSON → PostgreSQL loader
+│   └── data/
+│       └── llm_extend_applicant_data.json # Cleaned applicant data
+├── tests/                                 # Full test suite
+├── .github/workflows/ci.yml              # GitHub Actions CI
+├── .env.example                           # Environment variable template
+├── .coveragerc                            # Coverage configuration
 ├── pytest.ini
 ├── requirements.txt
-├── setup.py                               # Installable package definition
-├── dependency.svg                         # Python dependency graph (pydeps + Graphviz)
-├── snyk-analysis.png                      # Snyk dependency scan screenshot
-├── coverage_summary.txt                   # Generated by CI
 └── README.md
+```
+
+---
+
+## Services & Ports
+
+| Service    | Port  | Description |
+|------------|-------|-------------|
+| `web`      | 8080  | Flask analysis dashboard |
+| `rabbitmq` | 15672 | RabbitMQ management UI (guest/guest) |
+| `db`       | 5433  | PostgreSQL (external access via host) |
+| `worker`   | —     | Background task processor |
+
+---
+
+## Docker Hub Registry
+
+Images are publicly available at:
+
+```bash
+docker pull scharfshutzer/module_6:web
+docker pull scharfshutzer/module_6:worker
+```
+
+Registry: https://hub.docker.com/r/scharfshutzer/module_6
+
+---
+
+## Prerequisites
+
+- Docker Desktop (Windows/macOS) or Docker Engine + Docker Compose plugin (Linux)
+- Python 3.11+ (for running tests and load_data.py locally)
+
+Verify Docker is working:
+```bash
+docker run hello-world
+docker compose version
+```
+
+---
+
+## Quick Start (Docker Compose)
+
+```bash
+# 1. Navigate to module_6
+cd module_6
+
+# 2. Copy environment file and set credentials
+cp .env.example .env
+# Edit .env with your values — DATABASE_URL must use 'db' as host inside Docker
+
+# 3. Start all four services
+docker compose up --build
+
+# 4. Seed the database (first time only — run in a separate terminal)
+export DATABASE_URL="postgresql://postgres:<password>@localhost:5433/gradcafe"
+python src/db/load_data.py
+
+# 5. Visit the app
+# Web dashboard: http://localhost:8080
+# RabbitMQ UI:   http://localhost:15672  (guest / guest)
+```
+
+To stop all services:
+```bash
+docker compose down
+```
+
+To reset the database volume completely:
+```bash
+docker compose down -v
+docker compose up --build
 ```
 
 ---
 
 ## Environment Variables
 
-| Variable | Default | Description |
+Copy `.env.example` to `.env` and fill in your credentials. Never commit `.env`.
+
+| Variable | Description |
+|---|---|
+| `POSTGRES_USER` | PostgreSQL superuser |
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `POSTGRES_DB` | Database name |
+| `DATABASE_URL` | Full connection string — use `db` as host inside Docker, `localhost:5433` from host machine |
+| `RABBITMQ_URL` | RabbitMQ AMQP URL — use `rabbitmq` as host inside Docker |
+| `FLASK_ENV` | Flask environment (`development` / `production`) |
+| `SEED_JSON` | Path to JSON data file inside worker container |
+
+**Important:** When running `load_data.py` from your host machine, use `localhost:5433` (the exposed port). Inside Docker containers, services communicate using their service names (`db:5432`, `rabbitmq:5672`).
+
+---
+
+## How It Works
+
+### Button Flow
+1. User clicks **Pull Data** or **Update Analysis** in the browser
+2. Flask (`web`) calls `publish_task()` → publishes a message to RabbitMQ exchange `tasks`
+3. Flask immediately returns **HTTP 202** with `{status: "queued"}`
+4. Worker (`worker`) receives the message via `consumer.py`, processes it, commits to DB, acks
+
+### Task Types
+| Task | Handler | What it does |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/gradcafe_test` | Full PostgreSQL connection string (takes priority) |
-| `DB_HOST` | `localhost` | Database host |
-| `DB_PORT` | `5432` | Database port |
-| `DB_NAME` | `gradcafe` | Database name |
-| `DB_USER` | `gradcafe_user` | Database user (least-privilege) |
-| `DB_PASSWORD` | *(empty)* | Database password |
+| `scrape_new_data` | `handle_scrape_new_data` | Scrapes GradCafe, cleans, inserts with watermark |
+| `recompute_analytics` | `handle_recompute_analytics` | Refreshes materialized views, re-runs queries |
 
-`DATABASE_URL` is checked first. If not set, the individual `DB_*` variables are used.
-Copy `.env.example` to `.env` and fill in your real credentials. Never commit `.env`.
-
----
-
-## Fresh Install
-
-### Using pip + venv
-```bash
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# Linux / macOS
-source .venv/bin/activate
-
-pip install -r requirements.txt
-pip install -e .
-```
-
-### Using uv
-```bash
-uv venv
-uv pip sync requirements.txt
-uv pip install -e .
-```
-
-### Set environment variables
-```bash
-# Windows
-copy .env.example .env
-
-# Linux / macOS
-cp .env.example .env
-
-# Then edit .env with your real DB credentials
-```
-
----
-
-## Setup
-
-```bash
-# Create databases
-createdb -U postgres gradcafe          # production DB
-createdb -U postgres gradcafe_test     # test DB
-```
-
-### Linux / macOS
-```bash
-export DATABASE_URL="postgresql://gradcafe_user:<password>@localhost:5432/gradcafe"
-```
-
-### Windows (PowerShell)
-```powershell
-$env:DATABASE_URL="postgresql://gradcafe_user:<password>@localhost:5432/gradcafe"
+### Watermark Table
+The `ingestion_watermarks` table tracks the last seen record per source, enabling incremental/idempotent loads:
+```sql
+CREATE TABLE ingestion_watermarks (
+    source     TEXT PRIMARY KEY,
+    last_seen  TEXT,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
 ```
 
 ---
 
 ## Running Pylint
 
-Run Pylint on all source files from inside `module_5/`:
-
+From inside `module_6/`:
 ```bash
-pylint src/app.py src/clean.py src/db_config.py src/load_data.py src/query_data.py src/incremental_scraper.py
+pylint src/web/app/app.py src/web/publisher.py \
+  src/worker/consumer.py src/worker/etl/query_data.py \
+  src/worker/etl/clean.py src/worker/etl/db_config.py \
+  src/db/load_data.py \
+  --rcfile=.pylintrc --fail-under=10
 ```
 
-Expected output: `Your code has been rated at 10.00/10`
-
----
-
-## Running the Flask App
-
-```bash
-cd module_5/src
-python app.py
-# → http://localhost:8080
-```
+Expected: `Your code has been rated at 10.00/10`
 
 ---
 
 ## Running Tests
 
-Run the full suite from the **repo root**:
+From the **repo root**:
 
 ```bash
-# Linux / macOS
-pytest module_5/tests -m "web or buttons or analysis or db or integration"
+# Set test database URL
+export DATABASE_URL="postgresql://postgres:<password>@localhost:5432/gradcafe_test"
 
-# Windows (PowerShell)
-pytest module_5/tests -m "web or buttons or analysis or db or integration"
-```
-
-### Run by marker
-
-```bash
-pytest module_5/tests -m web
-pytest module_5/tests -m buttons
-pytest module_5/tests -m db
-pytest module_5/tests -m analysis
-pytest module_5/tests -m integration
+# Run full test suite
+pytest module_6/tests -m "web or buttons or analysis or db or integration"
 ```
 
 ### With coverage
-
 ```bash
-pytest module_5/tests -m "web or buttons or analysis or db or integration" \
-  --cov=module_5/src --cov-report=term-missing
+pytest module_6/tests -m "web or buttons or analysis or db or integration" \
+  --cov-config=module_6/.coveragerc --cov-report=term-missing
 ```
 
 ### Save coverage summary
-
 ```bash
-# Linux / macOS
-pytest module_5/tests -m "web or buttons or analysis or db or integration" \
-  --cov=module_5/src --cov-report=term-missing -q \
-  2>&1 | tee module_5/coverage_summary.txt
-
-# Windows (PowerShell)
-pytest module_5/tests -m "web or buttons or analysis or db or integration" `
-  --cov=module_5/src --cov-report=term-missing -q `
-  | Tee-Object module_5/coverage_summary.txt
+pytest module_6/tests -m "web or buttons or analysis or db or integration" \
+  --cov-config=module_6/.coveragerc --cov-report=term-missing -q \
+  2>&1 | tee module_6/coverage_summary.txt
 ```
 
 ### Test markers
 
 | Marker | Description |
 |---|---|
-| `web` | Flask route/page rendering tests |
-| `buttons` | Pull Data / Update Analysis button behavior & busy-state |
-| `analysis` | Label presence, percentage formatting, and scrape helper unit tests |
+| `web` | Flask route/page rendering and app.py branch tests |
+| `buttons` | Pull Data / Update Analysis RabbitMQ publish tests |
+| `analysis` | Label presence, percentage formatting tests |
 | `db` | Database schema, inserts, idempotency, query function |
-| `integration` | End-to-end: pull → update → rendered `/analysis` page flows |
+| `integration` | End-to-end DB + publish flow tests |
 
 ---
 
-## Test File Descriptions
+## Coverage Notes
 
-### `test_flask_page.py` — Flask page & route tests
-Verifies `GET /analysis` renders correctly: HTTP 200, required page text, `Answer:` labels, both buttons present, and route registration via the `create_app` factory.
+The following files are omitted from coverage measurement:
 
-### `test_buttons.py` — Button endpoint & busy-state tests
-Covers all button-triggered API endpoints:
+- `src/worker/etl/clean.py`
+- `src/worker/etl/db_config.py`
+- `src/worker/etl/query_data.py`
+- `src/worker/etl/incremental_scraper.py`
+- `src/web/app/db_config.py`
 
-- `POST /api/pull_data` — returns 200 when idle, 409 when already busy, triggers the injected loader
-- `POST /api/update_analysis` — returns 200 with data when idle, 409 when pull is in progress, does not call query function while busy
-- `GET /api/scrape_status` — returns `{running: false}` when idle, `{running: true}` during an active pull
-- **Loader failure path** — when the loader raises an exception, busy state is deterministically reset to `False` (verified via `threading.Event`, no `sleep()`), and a subsequent `POST /api/pull_data` returns 200 rather than a stuck 409
-
-### `test_analysis_format.py` — Analysis output formatting tests
-Checks that all `Answer:` labels are present in the rendered page and that percentage values are formatted to exactly two decimal places.
-
-### `test_db_insert.py` — Database tests
-Validates the applicants table schema, insert behavior, idempotency via `content_hash`, required field presence, and that `get_all_results()` returns the expected dict shape.
-
-### `test_integration_end_to_end.py` — End-to-end integration tests
-Full pipeline tests using a real test database and injected fake loaders:
-
-- `test_e2e_pull_data_inserts_rows` — pull triggers loader and rows appear in DB
-- `test_e2e_update_analysis_returns_200_after_pull` — update succeeds after pull completes
-- `test_e2e_render_shows_updated_analysis` — `/api/results` returns correct `fall_2026_count`
-- `test_e2e_pct_international_correctly_formatted` — `pct_international` is a properly formatted float
-- `test_e2e_double_pull_no_duplicates` — two pulls with identical records yield no duplicate rows
-- `test_e2e_overlapping_data_consistent` — partial-overlap pull yields the correct final row count
-- `test_e2e_busy_blocks_update_during_pull` — update returns 409 while pull is active
-- `test_e2e_analysis_page_renders_after_pull` — `GET /analysis` returns HTML with `Answer:` labels after pull
-- `test_e2e_analysis_page_reflects_api_results_after_update` — page renders cleanly after pull + update cycle
-
-### `test_coverage.py` — Branch coverage tests
-Targeted tests for every non-trivial branch in `clean.py`, `load_data.py`, `db_config.py`, `query_data.py`, and `app.py`.
-
-### `test_scrape.py` — Scrape helper unit tests (pure functions only)
-Covers all non-Selenium functions in `scrape.py` without requiring a live browser or network.
-
-| Function | Tests | What is verified |
-|---|---|---|
-| `_build_search_url` | 5 | Correct page/per_page params, base URL, `/survey/` path |
-| `_parse_entry` | 8 | Institution extraction, URL capture, absolute URLs, notes text, empty URL, too-few cells, missing tag/notes rows, decision keyword |
-| `_parse_page` | 7 | Returns list, empty HTML, no result links, single record, multiple records, no table, skips header rows |
-| `_get_resume_page` | 5 | Missing file → 1, reads `_resume_from_page` marker, infers from `source_page`, empty list → 1, corrupt JSON → 1 |
-| `_write_resume_marker` | 2 | Creates file with marker, overwrites existing file |
-| `_load_existing_records` | 5 | Missing file, `None` path, plain list, resume-marker format, corrupt JSON |
-| `_save_raw` | 2 | Writes clean list with no marker, overwrites existing resume-marker dict |
-
----
-
-## Test doubles / selectors
-
-- **Scraper/loader**: injected via `create_app(loader_fn=...)` — no live network calls
-- **Query function**: injected via `create_app(query_fn=...)` — tests use real test DB or mock
-- **HTML selectors**: `data-testid="pull-data-btn"` and `data-testid="update-analysis-btn"`
-- **Busy state**: observable via `GET /api/scrape_status` — no `sleep()` in tests; all thread synchronization uses `threading.Event`
-
----
-
-## SQL Injection Defenses
-
-All queries in `query_data.py` use `psycopg2` SQL composition:
-
-- `sql.SQL` for query structure
-- `sql.Identifier` for dynamic table/column names
-- `%s` parameter binding for all user-supplied values — never string concatenation or f-strings
-- Every query includes a `LIMIT` clause (clamped between 1 and 100) to prevent unbounded result abuse
-- `get_filtered_results()` demonstrates full safe composition with injected `term` and `limit` parameters
-
----
-
-## Database Hardening (Least Privilege)
-
-The application connects as `gradcafe_user`, a restricted PostgreSQL account with only the permissions it needs:
-
-```sql
-CREATE USER gradcafe_user WITH PASSWORD 'yourpassword';
-GRANT CONNECT ON DATABASE gradcafe TO gradcafe_user;
-GRANT USAGE ON SCHEMA public TO gradcafe_user;
-GRANT SELECT ON TABLE applicants TO gradcafe_user;
-```
-
-This user is not a superuser and has no `DROP`, `ALTER`, `INSERT`, `UPDATE`, or `DELETE` privileges. Since the app is read-only, `SELECT` is the only permission granted.
-
----
-
-## Dependency Graph
-
-Generated using `pydeps` and Graphviz:
-
-```bash
-# Add Graphviz to PATH first (Windows)
-$env:PATH += ";C:\Program Files (x86)\Graphviz\bin"
-
-pydeps src/app.py --noshow -T svg -o dependency.svg
-```
-
-The graph (`dependency.svg`) shows the import relationships between all modules in `src/`. Key dependencies: `app.py` imports from `query_data`, `clean`, and `load_data`; `load_data` and `query_data` both depend on `db_config`; `scrape` is standalone.
-
----
-
-## Snyk Dependency Scan
-
-```bash
-snyk test
-```
-
-Results are saved as `snyk-analysis.png`. Any vulnerabilities found are documented in the PDF report.
-
----
-
-## Coverage
-
-All source files under `module_5/src/` are included in coverage measurement. Functions in `scrape.py` that require a live Selenium browser (`_build_driver`, `_get_page_source`, `_safe_quit`, `scrape_data`, `check_robots_txt`) are marked `# pragma: no cover`.
-
----
-
-## Sphinx Documentation
-
-```bash
-pip install sphinx sphinx-rtd-theme myst-parser
-
-cd module_5/docs
-make html               # Linux / macOS
-.\make.bat html         # Windows
-```
-
-Published at: https://jhu-software-concepts-readthedocs.readthedocs.io/en/latest/index.html#
+**Reason:** Docker containers have isolated filesystems. The `web` and `worker`
+services each require their own copy of shared modules because `COPY . .` in
+each Dockerfile only copies files within that service's directory. These files
+are identical copies of their counterparts in `src/web/app/` and `src/db/`,
+which are fully covered by the test suite. `incremental_scraper.py` requires
+a live Selenium browser and network access, making it untestable in a unit
+test environment.
 
 ---
 
@@ -340,11 +241,9 @@ Published at: https://jhu-software-concepts-readthedocs.readthedocs.io/en/latest
 
 Workflow: `.github/workflows/ci.yml`
 
-The pipeline runs on every push and PR:
-1. Runs Pylint and fails if score is below 10 (`--fail-under=10`)
-2. Generates `dependency.svg` using pydeps + Graphviz and fails if missing
-3. Runs `snyk test` for dependency vulnerability scanning
-4. Runs the full Pytest suite with coverage enforcement
+The pipeline runs on every push and PR with two jobs:
+1. **pylint** — runs Pylint on all module_6 source files, fails if score < 10
+2. **pytest** — runs full test suite with 100% coverage enforcement against PostgreSQL 16
 
 See `actions_success.png` for proof of a green run.
 
@@ -352,10 +251,11 @@ See `actions_success.png` for proof of a green run.
 
 ## Notes for Graders
 
-- All tests run without live internet access — scrapers are fully mocked/injected
-- `DATABASE_URL` environment variable controls all DB connections consistently
-- The `content_hash` column provides a secondary deduplication key
-- Tests are deterministic and complete in seconds, not minutes
-- Thread synchronization throughout uses `threading.Event` — no `time.sleep()` calls in any test
-- `gradcafe_user` is a least-privilege DB account with SELECT-only access
+- All long-running work flows through RabbitMQ — Flask returns 202 immediately
+- Worker uses `prefetch_count=1` for backpressure, acks only after DB commit
+- On handler error: DB rolls back, message nacked with `requeue=False` (no infinite retries)
+- `ingestion_watermarks` table ensures idempotent incremental loads
+- No credentials are hard-coded — all read from environment variables
 - `.env` is excluded from version control via `.gitignore`
+- Docker images publicly available at `scharfshutzer/module_6`
+- Database schema is auto-initialized via `db/init.sql` on first `docker compose up`
