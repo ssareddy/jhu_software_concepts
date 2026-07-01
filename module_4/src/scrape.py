@@ -1,5 +1,5 @@
 """
-scrape.py — Grad Cafe Web Scraper
+incremental_scraper.py — Grad Cafe Web Scraper
 ----------------------------------
 Pulls graduate applicant data from thegradcafe.com using a hybrid
 urllib + Selenium + BeautifulSoup workflow.
@@ -547,6 +547,6 @@ if __name__ == "__main__":  # pragma: no cover
     import sys
 
     # Automatically resumes from where the last run stopped.
-    # Optionally pass a page number to override: python scrape.py 101
+    # Optionally pass a page number to override: python incremental_scraper.py 101
     start = int(sys.argv[1]) if len(sys.argv) > 1 else _get_resume_page(RAW_FILE)
     scrape_data(start_page=start)

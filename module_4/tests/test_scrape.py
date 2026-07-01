@@ -1,10 +1,10 @@
 """
 tests/test_scrape.py
 ---------------------
-Coverage tests for the pure (non-Selenium) helper functions in scrape.py.
+Coverage tests for the pure (non-Selenium) helper functions in incremental_scraper.py.
 
 All Selenium-dependent code (_build_driver, _get_page_source, _safe_quit,
-scrape_data, check_robots_txt) is marked ``# pragma: no cover`` in scrape.py
+scrape_data, check_robots_txt) is marked ``# pragma: no cover`` in incremental_scraper.py
 because it requires a live headless browser and network access — neither of
 which is available in the test environment.
 

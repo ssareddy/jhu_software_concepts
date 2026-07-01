@@ -1,7 +1,7 @@
 """
 clean.py — Grad Cafe Data Cleaner
 -----------------------------------
-Converts raw scraped records (produced by scrape.py) into structured,
+Converts raw scraped records (produced by incremental_scraper.py) into structured,
 clean JSON objects using Python string methods and regex.
 
 Note: University and program name standardization is handled separately
@@ -452,7 +452,7 @@ def clean_data(raw_records: list[dict]) -> list[dict]:
     Clean a list of raw scraped records using regex and string methods.
 
     Args:
-        raw_records: Raw records produced by scrape_data() in scrape.py.
+        raw_records: Raw records produced by scrape_data() in incremental_scraper.py.
 
     Returns:
         List of cleaned, structured applicant record dicts.

@@ -1,0 +1,12 @@
+﻿Name                         Stmts   Miss  Cover   Missing
+----------------------------------------------------------
+module_5\src\app.py            106      0   100%
+module_5\src\clean.py          175      0   100%
+module_5\src\db_config.py       12      0   100%
+module_5\src\load_data.py       82      0   100%
+module_5\src\query_data.py      50      0   100%
+module_5\src\scrape.py         122      0   100%
+----------------------------------------------------------
+TOTAL                          547      0   100%
+Required test coverage of 100% reached. Total coverage: 100.00%
+190 passed in 3.04s
