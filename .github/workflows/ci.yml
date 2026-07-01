@@ -3,8 +3,12 @@ name: Module 5 CI
 on:
   push:
     branches: ["main", "master"]
+    paths:
+      - "module_5/**"
   pull_request:
     branches: ["main", "master"]
+    paths:
+      - "module_5/**"
 
 jobs:
   pylint:
