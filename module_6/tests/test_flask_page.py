@@ -3,11 +3,14 @@ tests/test_flask_page.py
 ------------------------
 Flask App & Page Rendering tests.
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
 
 import pytest
 from bs4 import BeautifulSoup
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +66,7 @@ def test_page_contains_pull_data_button(client):
     resp = client.get("/analysis")
     soup = BeautifulSoup(resp.data, "html.parser")
     btn = soup.find(attrs={"data-testid": "pull-data-btn"})
-    assert btn is not None, "Pull Data button not found (data-testid='pull-data-btn')"
+    assert btn is not None
 
 
 @pytest.mark.web
@@ -72,7 +75,7 @@ def test_page_contains_update_analysis_button(client):
     resp = client.get("/analysis")
     soup = BeautifulSoup(resp.data, "html.parser")
     btn = soup.find(attrs={"data-testid": "update-analysis-btn"})
-    assert btn is not None, "Update Analysis button not found (data-testid='update-analysis-btn')"
+    assert btn is not None
 
 
 @pytest.mark.web
@@ -107,3 +110,31 @@ def test_update_analysis_button_text(client):
     btn = soup.find(attrs={"data-testid": "update-analysis-btn"})
     assert btn is not None
     assert "Update Analysis" in btn.get_text()
+
+
+# ---------------------------------------------------------------------------
+# POST endpoints return 202
+# ---------------------------------------------------------------------------
+
+@pytest.mark.web
+def test_pull_data_returns_202(client):
+    """POST /api/pull_data returns 202."""
+    with patch("app.publish_task"):
+        resp = client.post("/api/pull_data")
+    assert resp.status_code == 202
+
+
+@pytest.mark.web
+def test_update_analysis_returns_202(client):
+    """POST /api/update_analysis returns 202."""
+    with patch("app.publish_task"):
+        resp = client.post("/api/update_analysis")
+    assert resp.status_code == 202
+
+
+@pytest.mark.web
+def test_scrape_status_returns_worker_managed(client):
+    """GET /api/scrape_status returns worker_managed."""
+    resp = client.get("/api/scrape_status")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "worker_managed"

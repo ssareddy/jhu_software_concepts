@@ -178,7 +178,7 @@ def _on_message(ch, method, _properties, body):
             conn.close()
 
 
-def main():
+def main():  # pragma: no cover
     """Start the RabbitMQ consumer loop with retry on connection failure."""
     url = os.environ["RABBITMQ_URL"]
     params = pika.URLParameters(url)
@@ -199,5 +199,5 @@ def main():
             time.sleep(5)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

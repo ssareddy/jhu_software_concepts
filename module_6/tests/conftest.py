@@ -3,13 +3,18 @@ conftest.py — shared fixtures for the entire test suite.
 """
 import os
 import sys
+import hashlib
 import pytest
 import psycopg2
 from psycopg2 import extras
 
-# Make sure module_4/src is importable
-SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "src")
-sys.path.insert(0, os.path.abspath(SRC_DIR))
+# Make src/web and src/web/app importable
+SRC_WEB = os.path.join(os.path.dirname(__file__), "..", "src", "web")
+SRC_WEB_APP = os.path.join(os.path.dirname(__file__), "..", "src", "web", "app")
+SRC_DB = os.path.join(os.path.dirname(__file__), "..", "src", "db")
+sys.path.insert(0, os.path.abspath(SRC_WEB))
+sys.path.insert(0, os.path.abspath(SRC_WEB_APP))
+sys.path.insert(0, os.path.abspath(SRC_DB))
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -103,6 +108,7 @@ SAMPLE_RECORDS = [
 
 
 def _get_db_conn():
+    """Open a connection to the test database."""
     return psycopg2.connect(DB_URL)
 
 
@@ -115,8 +121,7 @@ def _reset_table(conn):
 
 
 def _insert_records(conn, records):
-    import hashlib
-
+    """Insert records into the applicants table using content_hash dedup."""
     def pf(val):
         try:
             return float(val) if val not in (None, "", "N/A") else None
@@ -178,11 +183,9 @@ def seeded_db(clean_db):
 @pytest.fixture()
 def fake_query_fn(seeded_db):
     """A query_fn that runs real SQL against the test DB."""
-    import importlib, types
-    # Patch DB_CONFIG so query_data uses our test DB
+    import urllib.parse as up
     import query_data
     orig = query_data.DB_CONFIG.copy()
-    import urllib.parse as up
     r = up.urlparse(DB_URL)
     query_data.DB_CONFIG.update({
         "host": r.hostname,
@@ -226,30 +229,36 @@ def mock_query_fn():
 
 @pytest.fixture()
 def app(mock_query_fn):
-    """Flask test app with mocked query, no real DB/scraper needed."""
+    """Flask test app with mocked query and mocked publisher."""
+    from unittest.mock import patch
     import app as app_module
-    app_module._scrape_running = False  # reset busy state
     flask_app = app_module.create_app(query_fn=mock_query_fn)
     flask_app.config["TESTING"] = True
-    return flask_app
+    flask_app.config["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
+    with patch("app.publish_task"):
+        yield flask_app
 
 
 @pytest.fixture()
 def client(app):
+    """Test client for the Flask app."""
     return app.test_client()
 
 
 @pytest.fixture()
-def app_with_db(fake_query_fn, db_conn):
+def app_with_db(fake_query_fn):
     """Flask test app wired to the real test DB."""
+    from unittest.mock import patch
     import app as app_module
-    app_module._scrape_running = False
     flask_app = app_module.create_app(query_fn=fake_query_fn)
     flask_app.config["TESTING"] = True
     flask_app.config["DATABASE_URL"] = DB_URL
-    return flask_app
+    flask_app.config["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
+    with patch("app.publish_task"):
+        yield flask_app
 
 
 @pytest.fixture()
 def client_with_db(app_with_db):
+    """Test client wired to the real test DB."""
     return app_with_db.test_client()

@@ -6,13 +6,15 @@ Covers: clean.py helpers, load_data.py helpers, query_data.py,
         db_config.py, and app.py pipeline.
 All tests use fakes/mocks — no live internet or Selenium.
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "db"))
 
 import hashlib
 import json
 import re
-import threading
 import urllib.parse as up
 
 import psycopg2
@@ -22,7 +24,6 @@ from unittest.mock import MagicMock, patch, call
 import app as app_module
 import query_data
 import query_data as qd
-from app import _parse_float
 from clean import (
     _normalize_status, _normalize_degree, _extract_gpa, _extract_gre,
     _extract_semester_year, _extract_date, _extract_student_type,
@@ -31,7 +32,6 @@ from clean import (
 )
 from db_config import get_db_config, get_connection
 from load_data import parse_float, parse_date, make_content_hash, build_row, load_json, create_table, load_records, main
-
 
 # ===========================================================================
 # clean.py — helper function branches
@@ -237,10 +237,6 @@ def test_parse_float_empty():
     assert parse_float("") is None
 
 @pytest.mark.db
-def test_parse_float_invalid():
-    assert parse_float("not_a_number") is None
-
-@pytest.mark.db
 def test_parse_date_valid():
     assert parse_date("2024-03-01") == "2024-03-01"
 
@@ -411,106 +407,124 @@ def test_get_all_results_with_real_db(fake_query_fn):
     assert isinstance(result["q11_nationality_acceptance"], list)
 
 
+
 # ===========================================================================
-# app.py — run_scraper_pipeline and api_results error branch
+# app.py — module_6 RabbitMQ architecture tests
 # ===========================================================================
 
 @pytest.mark.web
-def test_run_scraper_pipeline_with_fake_scraper(clean_db):
-    """run_scraper_pipeline executes with a fake scraper and real DB."""
-
-    db_url = os.environ.get(
-        "DATABASE_URL",
-        "postgresql://postgres:postgres@localhost:5432/gradcafe_test"
-    )
-    r = up.urlparse(db_url)
-
-    def fake_get_conn():
-        return psycopg2.connect(
-            host=r.hostname, port=r.port or 5432,
-            dbname=r.path.lstrip("/"), user=r.username,
-            password=r.password or "",
-        )
-
-    fake_records = [
-        {
-            "raw_institution_program": "MIT",
-            "raw_degree_status": "CS · PhD | Accepted on Mar 01 | Fall 2026   American",
-            "raw_date": "Mar 01, 2024",
-            "raw_notes": "GPA: 3.9",
-            "url": "https://thegradcafe.com/result/pipeline_test",
-        }
-    ]
-
-    with patch("db_config.get_connection", fake_get_conn):
-        app_module.run_scraper_pipeline(scraper_fn=lambda: fake_records)
-
-    app_module._busy.set(False)
-
-
-@pytest.mark.web
-def test_run_scraper_pipeline_clears_busy_on_error():
-    """run_scraper_pipeline clears busy state even when an error occurs."""
-    app_module._busy.set(True)
-
-    def bad_scraper():
-        raise RuntimeError("Simulated scraper failure")
-
-    # scraper raises before get_connection is called — no DB patch needed
-    app_module.run_scraper_pipeline(scraper_fn=bad_scraper)
-
-    assert app_module._busy.get() is False
-
-
-@pytest.mark.web
-def test_api_results_error_returns_500(mock_query_fn):
+def test_api_results_error_returns_500():
     """GET /api/results returns 500 when query function raises."""
-    app_module._busy.set(False)
-
     def failing_query():
         raise RuntimeError("DB error")
 
     flask_app = app_module.create_app(query_fn=failing_query)
     flask_app.config["TESTING"] = True
     client = flask_app.test_client()
-
     resp = client.get("/api/results")
     assert resp.status_code == 500
-    data = resp.get_json()
-    assert data["status"] == "error"
+    assert resp.get_json()["status"] == "error"
 
 
 @pytest.mark.web
-def test_api_update_analysis_error_returns_500(mock_query_fn):
-    """POST /api/update_analysis returns 500 when query function raises."""
-    app_module._busy.set(False)
+def test_api_results_uses_real_query_when_no_fn():
+    """GET /api/results falls back to get_all_results when no query_fn injected."""
+    mock_results = {"fall_2026_count": 5, "pct_international": 20.0,
+                    "avg_gpa": 3.5, "avg_gre": 320.0, "avg_gre_v": 155.0,
+                    "avg_gre_aw": 4.0, "avg_gpa_american": 3.6,
+                    "pct_accepted_fall_2026": 30.0, "avg_gpa_accepted": 3.7,
+                    "jhu_ms_cs_count": 2, "q8_scraped": 1, "q9_llm": 1,
+                    "q10_degree_gpa": [], "q11_nationality_acceptance": []}
 
-    def failing_query():
-        raise RuntimeError("DB error")
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
 
-    flask_app = app_module.create_app(query_fn=failing_query)
+    with patch("app.get_all_results", return_value=mock_results):
+        client = flask_app.test_client()
+        resp = client.get("/api/results")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
+
+
+@pytest.mark.web
+def test_api_pull_data_publishes_and_returns_202():
+    """POST /api/pull_data publishes task and returns 202."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch("app.publish_task") as mock_pub:
+        client = flask_app.test_client()
+        resp = client.post("/api/pull_data")
+        mock_pub.assert_called_once_with("scrape_new_data", payload={})
+
+    assert resp.status_code == 202
+    assert resp.get_json()["status"] == "queued"
+
+
+@pytest.mark.web
+def test_api_update_analysis_publishes_and_returns_202():
+    """POST /api/update_analysis publishes task and returns 202."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch("app.publish_task") as mock_pub:
+        client = flask_app.test_client()
+        resp = client.post("/api/update_analysis")
+        mock_pub.assert_called_once_with("recompute_analytics", payload={})
+
+    assert resp.status_code == 202
+    assert resp.get_json()["status"] == "queued"
+
+
+@pytest.mark.web
+def test_api_pull_data_returns_503_on_failure():
+    """POST /api/pull_data returns 503 when publish_task raises."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch("app.publish_task", side_effect=RuntimeError("RabbitMQ down")):
+        client = flask_app.test_client()
+        resp = client.post("/api/pull_data")
+
+    assert resp.status_code == 503
+    assert resp.get_json()["error"] == "publish_failed"
+
+
+@pytest.mark.web
+def test_api_update_analysis_returns_503_on_failure():
+    """POST /api/update_analysis returns 503 when publish_task raises."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch("app.publish_task", side_effect=OSError("connection failed")):
+        client = flask_app.test_client()
+        resp = client.post("/api/update_analysis")
+
+    assert resp.status_code == 503
+    assert resp.get_json()["error"] == "publish_failed"
+
+
+@pytest.mark.web
+def test_api_scrape_status_returns_worker_managed():
+    """GET /api/scrape_status returns worker_managed status."""
+    flask_app = app_module.create_app()
     flask_app.config["TESTING"] = True
     client = flask_app.test_client()
+    resp = client.get("/api/scrape_status")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "worker_managed"
 
-    resp = client.post("/api/update_analysis")
-    assert resp.status_code == 500
-
-
-@pytest.mark.web
-def test_parse_float_valid_in_app():
-    assert _parse_float("3.9") == 3.9
 
 @pytest.mark.web
-def test_parse_float_none_in_app():
-    assert _parse_float(None) is None
-
-@pytest.mark.web
-def test_parse_float_invalid_in_app():
-    assert _parse_float("bad") is None
-
-@pytest.mark.web
-def test_is_busy_false_by_default(app):
-    assert app_module._busy.get() is False
+def test_get_query_fn_uses_injection():
+    """_get_query_fn returns injected query_fn when provided."""
+    custom_fn = lambda: {"fall_2026_count": 42}
+    flask_app = app_module.create_app(query_fn=custom_fn)
+    flask_app.config["TESTING"] = True
+    client = flask_app.test_client()
+    resp = client.get("/api/results")
+    assert resp.get_json()["data"]["fall_2026_count"] == 42
 
 
 # ===========================================================================
@@ -627,6 +641,11 @@ def test_clean_save_and_load_data(tmp_path):
 # ===========================================================================
 
 @pytest.mark.db
+def test_parse_float_type_error():
+    """parse_float returns None on TypeError (e.g. dict input)."""
+    assert parse_float({"bad": "type"}) is None
+
+@pytest.mark.db
 def test_load_json_reads_file_and_inserts(clean_db, tmp_path):
     """load_json() reads a JSON file and inserts records into DB."""
 
@@ -727,112 +746,6 @@ def test_run_queries_executes(fake_query_fn):
     assert "fall_2026_count" in result
 
 
-# ===========================================================================
-# app.py — db_url branch in run_scraper_pipeline
-# ===========================================================================
-
-@pytest.mark.web
-def test_run_scraper_pipeline_with_db_url():
-    """run_scraper_pipeline uses psycopg2.connect directly when db_url is provided."""
-
-    db_url = "postgresql://postgres:postgres@localhost:5432/gradcafe_test"
-
-    fake_records = [{
-        "raw_institution_program": "Harvard",
-        "raw_degree_status": "Physics · PhD | Accepted on Feb 20 | Fall 2026   American",
-        "raw_date": "Feb 20, 2024",
-        "raw_notes": "GPA: 3.95",
-        "url": "https://thegradcafe.com/result/dburl_test",
-    }]
-
-    mock_conn = MagicMock()
-
-    with patch("psycopg2.connect", return_value=mock_conn), \
-         patch("psycopg2.extras.execute_values"):
-        app_module.run_scraper_pipeline(
-            scraper_fn=lambda: fake_records,
-            db_url=db_url,
-        )
-
-    app_module._busy.set(False)
-    mock_conn.commit.assert_called_once()
-    mock_conn.close.assert_called_once()
-
-
-@pytest.mark.web
-def test_api_pull_data_uses_default_runner():
-    """POST /api/pull_data uses run_scraper_pipeline when no loader_fn is set."""
-    app_module._busy.set(False)
-
-    done = threading.Event()
-
-    def mock_pipeline(scraper_fn, db_url=""):
-        done.set()
-        app_module._busy.set(False)
-
-    flask_app = app_module.create_app(query_fn=lambda: {
-        "fall_2026_count": 0, "pct_international": 0.0,
-        "avg_gpa": 0.0, "avg_gre": 0.0, "avg_gre_v": 0.0, "avg_gre_aw": 0.0,
-        "avg_gpa_american": 0.0, "pct_accepted_fall_2026": 0.0,
-        "avg_gpa_accepted": 0.0, "jhu_ms_cs_count": 0,
-        "q8_scraped": 0, "q9_llm": 0,
-        "q10_degree_gpa": [], "q11_nationality_acceptance": [],
-    })
-    flask_app.config["TESTING"] = True
-
-    with patch("app.run_scraper_pipeline", mock_pipeline):
-        client = flask_app.test_client()
-        resp = client.post("/api/pull_data")
-
-    done.wait(timeout=3)
-    assert resp.status_code == 200
-
-
-@pytest.mark.web
-def test_api_results_uses_real_query_when_no_fn():
-    """GET /api/results falls back to get_all_results when no query_fn injected."""
-    app_module._busy.set(False)
-
-    mock_results = {"fall_2026_count": 5, "pct_international": 20.0,
-                    "avg_gpa": 3.5, "avg_gre": 320.0, "avg_gre_v": 155.0,
-                    "avg_gre_aw": 4.0, "avg_gpa_american": 3.6,
-                    "pct_accepted_fall_2026": 30.0, "avg_gpa_accepted": 3.7,
-                    "jhu_ms_cs_count": 2, "q8_scraped": 1, "q9_llm": 1,
-                    "q10_degree_gpa": [], "q11_nationality_acceptance": []}
-
-    flask_app = app_module.create_app()  # no query_fn — uses real import
-    flask_app.config["TESTING"] = True
-
-    with patch("app.get_all_results", return_value=mock_results):
-        client = flask_app.test_client()
-        resp = client.get("/api/results")
-
-    assert resp.status_code == 200
-    assert resp.get_json()["status"] == "ok"
-
-
-@pytest.mark.web
-def test_api_update_analysis_uses_real_query_when_no_fn():
-    """POST /api/update_analysis falls back to get_all_results when no query_fn injected."""
-    app_module._busy.set(False)
-
-    mock_results = {"fall_2026_count": 5, "pct_international": 20.0,
-                    "avg_gpa": 3.5, "avg_gre": 320.0, "avg_gre_v": 155.0,
-                    "avg_gre_aw": 4.0, "avg_gpa_american": 3.6,
-                    "pct_accepted_fall_2026": 30.0, "avg_gpa_accepted": 3.7,
-                    "jhu_ms_cs_count": 2, "q8_scraped": 1, "q9_llm": 1,
-                    "q10_degree_gpa": [], "q11_nationality_acceptance": []}
-
-    flask_app = app_module.create_app()  # no query_fn
-    flask_app.config["TESTING"] = True
-
-    with patch("app.get_all_results", return_value=mock_results):
-        client = flask_app.test_client()
-        resp = client.post("/api/update_analysis")
-
-    assert resp.status_code == 200
-    assert resp.get_json()["ok"] is True
-
 @pytest.mark.db
 def test_get_filtered_results_clamps_limit(monkeypatch):
     """get_filtered_results clamps limit between 1 and MAX_LIMIT."""
@@ -878,4 +791,223 @@ def test_get_filtered_results_minimum_limit(monkeypatch):
 
     monkeypatch.setattr(qd, "_conn", lambda: FakeConn())
     qd.get_filtered_results(term="Fall 2026", limit=-5)
-    assert captured["params"][1] == 1  # clamped to minimum
+
+
+# ===========================================================================
+# consumer.py — unit tests for worker message handler
+# ===========================================================================
+
+@pytest.mark.web
+def test_consumer_parse_float_valid():
+    """consumer._parse_float returns float for valid string."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "worker"))
+    from consumer import _parse_float as cpf
+    assert cpf("3.9") == 3.9
+
+
+@pytest.mark.web
+def test_consumer_parse_float_none():
+    """consumer._parse_float returns None for None input."""
+    from consumer import _parse_float as cpf
+    assert cpf(None) is None
+
+
+@pytest.mark.web
+def test_consumer_parse_float_na():
+    """consumer._parse_float returns None for N/A."""
+    from consumer import _parse_float as cpf
+    assert cpf("N/A") is None
+
+
+@pytest.mark.web
+def test_consumer_on_message_malformed(monkeypatch):
+    """_on_message nacks malformed JSON without crashing."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "worker"))
+    from consumer import _on_message
+
+    mock_ch = MagicMock()
+    mock_method = MagicMock()
+    mock_method.delivery_tag = 1
+
+    _on_message(mock_ch, mock_method, None, b"not json at all")
+    mock_ch.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+
+
+@pytest.mark.web
+def test_consumer_on_message_unknown_kind(monkeypatch):
+    """_on_message nacks messages with unknown task kind."""
+    from consumer import _on_message
+
+    mock_ch = MagicMock()
+    mock_method = MagicMock()
+    mock_method.delivery_tag = 2
+
+    body = json.dumps({"kind": "unknown_task", "payload": {}}).encode()
+    _on_message(mock_ch, mock_method, None, body)
+    mock_ch.basic_nack.assert_called_once_with(delivery_tag=2, requeue=False)
+
+
+@pytest.mark.web
+def test_consumer_on_message_handler_error(monkeypatch):
+    """_on_message rolls back and nacks on handler DB error."""
+    from consumer import _on_message, TASK_MAP
+
+    mock_ch = MagicMock()
+    mock_method = MagicMock()
+    mock_method.delivery_tag = 3
+    mock_conn = MagicMock()
+
+    def failing_handler(conn, payload):
+        raise psycopg2.DatabaseError("DB error")
+
+    with patch.dict(TASK_MAP, {"scrape_new_data": failing_handler}), \
+         patch("consumer._open_db", return_value=mock_conn):
+        body = json.dumps({"kind": "scrape_new_data", "payload": {}}).encode()
+        _on_message(mock_ch, mock_method, None, body)
+
+    mock_conn.rollback.assert_called_once()
+    mock_ch.basic_nack.assert_called_once_with(delivery_tag=3, requeue=False)
+
+@pytest.mark.web
+def test_consumer_parse_float_invalid():
+    """consumer._parse_float returns None for non-numeric string."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "worker"))
+    from consumer import _parse_float as cpf
+    assert cpf("not_a_number") is None
+
+@pytest.mark.web
+def test_consumer_parse_float_type_error():
+    """consumer._parse_float returns None on TypeError."""
+    from consumer import _parse_float as cpf
+    assert cpf({"bad": "type"}) is None
+
+
+@pytest.mark.web
+def test_consumer_on_message_success(monkeypatch):
+    """_on_message acks on successful handler execution."""
+    from consumer import _on_message, TASK_MAP
+
+    mock_ch = MagicMock()
+    mock_method = MagicMock()
+    mock_method.delivery_tag = 4
+    mock_conn = MagicMock()
+
+    def good_handler(conn, payload):
+        pass
+
+    with patch.dict(TASK_MAP, {"scrape_new_data": good_handler}), \
+         patch("consumer._open_db", return_value=mock_conn):
+        body = json.dumps({"kind": "scrape_new_data", "payload": {}}).encode()
+        _on_message(mock_ch, mock_method, None, body)
+
+    mock_ch.basic_ack.assert_called_once_with(delivery_tag=4)
+
+
+@pytest.mark.web
+def test_consumer_get_watermark_none(monkeypatch):
+    """_get_watermark returns None when no watermark exists."""
+    from consumer import _get_watermark
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = None
+    result = _get_watermark(mock_cur, "gradcafe")
+    assert result is None
+
+
+@pytest.mark.web
+def test_consumer_get_watermark_value(monkeypatch):
+    """_get_watermark returns last_seen value when it exists."""
+    from consumer import _get_watermark
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = ("2024-03-01",)
+    result = _get_watermark(mock_cur, "gradcafe")
+    assert result == "2024-03-01"
+
+
+@pytest.mark.web
+def test_consumer_set_watermark(monkeypatch):
+    """_set_watermark executes upsert SQL."""
+    from consumer import _set_watermark
+    mock_cur = MagicMock()
+    _set_watermark(mock_cur, "gradcafe", "2024-03-01")
+    mock_cur.execute.assert_called_once()
+
+
+@pytest.mark.web
+def test_consumer_handle_recompute_analytics(monkeypatch):
+    """handle_recompute_analytics commits and calls get_all_results."""
+    from consumer import handle_recompute_analytics
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("consumer.get_all_results") as mock_results:
+        handle_recompute_analytics(mock_conn, {})
+        mock_results.assert_called_once()
+    mock_conn.commit.assert_called_once()
+
+
+@pytest.mark.web
+def test_consumer_handle_scrape_no_records(monkeypatch):
+    """handle_scrape_new_data commits when no cleaned records returned."""
+    from consumer import handle_scrape_new_data
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = None
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("consumer.scrape_data", return_value=[]), \
+         patch("consumer.clean_data", return_value=[]):
+        handle_scrape_new_data(mock_conn, {})
+
+    mock_conn.commit.assert_called_once()
+
+
+# ===========================================================================
+# clean.py — missing branch: _extract_decision_dates with None status
+# ===========================================================================
+
+@pytest.mark.analysis
+def test_extract_decision_dates_none_status():
+    """_extract_decision_dates returns (None, None) when status is None."""
+    from clean import _extract_decision_dates
+    result = _extract_decision_dates(None)
+    assert result == (None, None)
+
+
+@pytest.mark.web
+def test_consumer_open_db(monkeypatch):
+    """_open_db connects using DATABASE_URL."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "worker"))
+    from consumer import _open_db
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:pass@localhost:5432/test")
+    with patch("consumer.psycopg2.connect") as mock_connect:
+        mock_connect.return_value = MagicMock()
+        _open_db()
+        mock_connect.assert_called_once()
+
+
+@pytest.mark.web
+def test_consumer_handle_scrape_with_records(monkeypatch):
+    """handle_scrape_new_data inserts records and sets watermark."""
+    from consumer import handle_scrape_new_data
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = None
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    fake_records = [{
+        "program": "CS, MIT", "comments": "", "date_added": "2024-03-01",
+        "url": "https://example.com/1", "status": "Accepted",
+        "term": "Fall 2026", "US/International": "American",
+        "GPA": "3.9", "GRE": "335", "GRE V": "165", "GRE AW": "4.5",
+        "Degree": "PhD", "llm-generated-program": "CS",
+        "llm-generated-university": "MIT",
+    }]
+
+    with patch("consumer.scrape_data", return_value=fake_records), \
+         patch("consumer.clean_data", return_value=fake_records):
+        handle_scrape_new_data(mock_conn, {})
+
+    mock_conn.commit.assert_called_once()

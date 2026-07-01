@@ -1,4 +1,3 @@
-# pylint: disable=duplicate-code
 """
 load_data.py
 ------------
@@ -18,7 +17,7 @@ Schema notes
 * Records with a null/blank URL *and* a null content_hash are skipped with a
   warning rather than inserted, to avoid phantom duplicates.
 """
-
+# pylint: disable=duplicate-code
 import os
 import json
 import hashlib

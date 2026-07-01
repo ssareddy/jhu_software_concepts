@@ -3,30 +3,21 @@ tests/test_analysis_format.py
 ------------------------------
 Analysis formatting — labels, percentage rendering, rounding.
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
 
 import re
 import pytest
-from bs4 import BeautifulSoup
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from unittest.mock import patch
 
 TWO_DECIMAL_PCT = re.compile(r"\d+\.\d{2}%")
 
 
 def _get_rendered_html(client):
-    """Trigger Update Analysis and get the full page HTML."""
-    # The page HTML (index.html) always contains Answer: labels statically
+    """Get the full page HTML."""
     return client.get("/analysis").data.decode()
-
-
-def _get_update_json(client):
-    resp = client.post("/api/update_analysis")
-    return resp.get_json()
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +49,7 @@ def test_pct_international_is_float(client):
     resp = client.get("/api/results")
     data = resp.get_json()["data"]
     val = data["pct_international"]
-    assert isinstance(val, float), f"pct_international should be float, got {type(val)}"
+    assert isinstance(val, float)
 
 
 @pytest.mark.analysis
@@ -72,12 +63,12 @@ def test_pct_accepted_is_float(client):
 
 @pytest.mark.analysis
 def test_pct_international_two_decimals(client):
-    """pct_international is rendered with exactly two decimal places in the API."""
+    """pct_international can be formatted to two decimal places."""
     resp = client.get("/api/results")
     data = resp.get_json()["data"]
     val = data["pct_international"]
     formatted = f"{val:.2f}%"
-    assert TWO_DECIMAL_PCT.match(formatted), f"Expected two-decimal %, got '{formatted}'"
+    assert TWO_DECIMAL_PCT.match(formatted)
 
 
 @pytest.mark.analysis
@@ -98,7 +89,7 @@ def test_nationality_rates_two_decimals(client):
     for entry in data.get("q11_nationality_acceptance", []):
         rate = entry["rate"]
         formatted = f"{rate:.2f}%"
-        assert TWO_DECIMAL_PCT.match(formatted), f"Rate not two-decimal: '{formatted}'"
+        assert TWO_DECIMAL_PCT.match(formatted)
 
 
 # ---------------------------------------------------------------------------
@@ -122,25 +113,26 @@ def test_avg_gre_is_numeric(client):
 
 
 # ---------------------------------------------------------------------------
-# update_analysis endpoint returns formatted values
+# update_analysis endpoint — now returns 202 queued
 # ---------------------------------------------------------------------------
 
 @pytest.mark.analysis
-def test_update_analysis_returns_pct_as_float(client):
-    """POST /api/update_analysis returns percentage values as floats."""
-    data = _get_update_json(client)
-    assert data["ok"] is True
-    pct = data["data"]["pct_international"]
-    assert isinstance(pct, float)
+def test_update_analysis_returns_202(client):
+    """POST /api/update_analysis returns 202 with status=queued."""
+    with patch("app.publish_task"):
+        resp = client.post("/api/update_analysis")
+    assert resp.status_code == 202
+    data = resp.get_json()
+    assert data["status"] == "queued"
 
 
 @pytest.mark.analysis
-def test_update_analysis_pct_two_decimal_format(client):
-    """POST /api/update_analysis pct_international can be formatted to two decimals."""
-    data = _get_update_json(client)
-    pct = data["data"]["pct_international"]
-    formatted = f"{pct:.2f}%"
-    assert TWO_DECIMAL_PCT.match(formatted)
+def test_update_analysis_task_is_recompute(client):
+    """POST /api/update_analysis task field is recompute_analytics."""
+    with patch("app.publish_task"):
+        resp = client.post("/api/update_analysis")
+    data = resp.get_json()
+    assert data["task"] == "recompute_analytics"
 
 
 # ---------------------------------------------------------------------------

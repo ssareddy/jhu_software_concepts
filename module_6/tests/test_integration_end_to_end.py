@@ -1,31 +1,27 @@
 """
 tests/test_integration_end_to_end.py
 --------------------------------------
-End-to-end integration tests: pull → update → render.
+End-to-end integration tests for the RabbitMQ-based architecture.
+Publisher is mocked; DB operations are tested against the real test DB.
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "db"))
 
 import re
-import threading
 import pytest
-import psycopg2
-from bs4 import BeautifulSoup
-from clean import clean_data
-import app as app_module
-from conftest import (
-    SAMPLE_RECORDS, _insert_records, _reset_table,
-    DB_URL, CREATE_TABLE_SQL, INSERT_SQL,
-)
-import query_data
 import urllib.parse as up
+from unittest.mock import patch
+from bs4 import BeautifulSoup
 
+import query_data
+from conftest import SAMPLE_RECORDS, _insert_records, _reset_table, DB_URL
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _patch_query_data_config():
+    """Point query_data at the test DB."""
     r = up.urlparse(DB_URL)
     query_data.DB_CONFIG.update({
         "host": r.hostname,
@@ -36,103 +32,44 @@ def _patch_query_data_config():
     })
 
 
-def _make_e2e_app(fake_scraper_records, conn):
-    """
-    Build an app whose loader:
-    - Calls clean_data on the fake records
-    - Inserts into the test DB
-    - Clears busy state
-    """
-    def fake_loader():
-        try:
-            cleaned = clean_data(fake_scraper_records)
-            _insert_records(conn, fake_scraper_records)  # use raw for schema match
-        except Exception as e:
-            print(f"Integration loader error: {e}")
-        finally:
-            app_module._busy.set(False)
-
-    _patch_query_data_config()
-    app_module._busy.set(False)
-    flask_app = app_module.create_app(
-        loader_fn=fake_loader,
-        query_fn=query_data.get_all_results,
-    )
+def _make_app(query_fn=None):
+    """Create a test app with mocked publisher."""
+    import app as app_module
+    flask_app = app_module.create_app(query_fn=query_fn or query_data.get_all_results)
     flask_app.config["TESTING"] = True
     flask_app.config["DATABASE_URL"] = DB_URL
+    flask_app.config["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
     return flask_app
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: pull → update → render
+# Page rendering
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_e2e_pull_data_inserts_rows(clean_db):
-    """POST /pull_data triggers loader and rows appear in DB."""
-    done = threading.Event()
-    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
+def test_e2e_analysis_page_renders(clean_db):
+    """GET /analysis renders HTML with Answer: labels and buttons."""
+    _insert_records(clean_db, SAMPLE_RECORDS)
+    _patch_query_data_config()
+    flask_app = _make_app()
     client = flask_app.test_client()
 
-    orig_loader = flask_app.config["LOADER_FN"]
-
-    def waiting_loader():
-        orig_loader()
-        done.set()
-
-    flask_app.config["LOADER_FN"] = waiting_loader
-
-    resp = client.post("/api/pull_data")
+    resp = client.get("/analysis")
     assert resp.status_code == 200
-    done.wait(timeout=5)
-
-    with clean_db.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM applicants;")
-        count = cur.fetchone()[0]
-    assert count == len(SAMPLE_RECORDS)
+    html = resp.data
+    soup = BeautifulSoup(html, "html.parser")
+    assert b"Answer:" in html
+    assert soup.find(attrs={"data-testid": "pull-data-btn"}) is not None
+    assert soup.find(attrs={"data-testid": "update-analysis-btn"}) is not None
 
 
 @pytest.mark.integration
-def test_e2e_update_analysis_returns_200_after_pull(clean_db):
-    """After pull completes, POST /update_analysis returns 200."""
-    done = threading.Event()
-    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
+def test_e2e_results_reflect_db_data(clean_db):
+    """GET /api/results returns correct fall_2026_count after data insert."""
+    _insert_records(clean_db, SAMPLE_RECORDS)
+    _patch_query_data_config()
+    flask_app = _make_app()
     client = flask_app.test_client()
-
-    orig_loader = flask_app.config["LOADER_FN"]
-
-    def waiting_loader():
-        orig_loader()
-        done.set()
-
-    flask_app.config["LOADER_FN"] = waiting_loader
-
-    client.post("/api/pull_data")
-    done.wait(timeout=5)
-
-    resp = client.post("/api/update_analysis")
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data["ok"] is True
-
-
-@pytest.mark.integration
-def test_e2e_render_shows_updated_analysis(clean_db):
-    """After pull + update, /api/results includes correct fall_2026_count."""
-    done = threading.Event()
-    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
-    client = flask_app.test_client()
-
-    orig_loader = flask_app.config["LOADER_FN"]
-
-    def waiting_loader():
-        orig_loader()
-        done.set()
-
-    flask_app.config["LOADER_FN"] = waiting_loader
-
-    client.post("/api/pull_data")
-    done.wait(timeout=5)
 
     resp = client.get("/api/results")
     data = resp.get_json()
@@ -142,81 +79,69 @@ def test_e2e_render_shows_updated_analysis(clean_db):
 
 @pytest.mark.integration
 def test_e2e_pct_international_correctly_formatted(clean_db):
-    """After pull, pct_international is a float (two-decimal-safe)."""
-    done = threading.Event()
-    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
+    """pct_international is a float formatted to two decimal places."""
+    _insert_records(clean_db, SAMPLE_RECORDS)
+    _patch_query_data_config()
+    flask_app = _make_app()
     client = flask_app.test_client()
-
-    orig_loader = flask_app.config["LOADER_FN"]
-
-    def waiting_loader():
-        orig_loader()
-        done.set()
-
-    flask_app.config["LOADER_FN"] = waiting_loader
-
-    client.post("/api/pull_data")
-    done.wait(timeout=5)
 
     resp = client.get("/api/results")
     data = resp.get_json()["data"]
     pct = data["pct_international"]
     assert isinstance(pct, float)
-    formatted = f"{pct:.2f}%"
-    assert re.match(r"\d+\.\d{2}%", formatted)
+    assert re.match(r"\d+\.\d{2}%", f"{pct:.2f}%")
 
 
 # ---------------------------------------------------------------------------
-# Multiple pulls — uniqueness
+# Task publishing
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_e2e_double_pull_no_duplicates(clean_db):
-    """Running pull twice with the same records does not duplicate rows."""
-    done1 = threading.Event()
-    done2 = threading.Event()
-    call_count = [0]
-
-    def make_loader(event):
-        def loader():
-            try:
-                _insert_records(clean_db, SAMPLE_RECORDS)
-            finally:
-                call_count[0] += 1
-                app_module._busy.set(False)
-                event.set()
-        return loader
-
-    app_module._busy.set(False)
+def test_e2e_pull_data_publishes_task(clean_db):
+    """POST /api/pull_data publishes scrape_new_data task and returns 202."""
     _patch_query_data_config()
-    flask_app = app_module.create_app(
-        loader_fn=make_loader(done1),
-        query_fn=query_data.get_all_results,
-    )
-    flask_app.config["TESTING"] = True
+    flask_app = _make_app()
     client = flask_app.test_client()
 
-    # First pull
-    client.post("/api/pull_data")
-    done1.wait(timeout=5)
+    with patch("app.publish_task") as mock_pub:
+        resp = client.post("/api/pull_data")
+        mock_pub.assert_called_once_with("scrape_new_data", payload={})
+    assert resp.status_code == 202
+    assert resp.get_json()["status"] == "queued"
 
-    # Second pull — swap loader, reset busy
-    flask_app.config["LOADER_FN"] = make_loader(done2)
-    client.post("/api/pull_data")
-    done2.wait(timeout=5)
 
+@pytest.mark.integration
+def test_e2e_update_analysis_publishes_task(clean_db):
+    """POST /api/update_analysis publishes recompute_analytics task and returns 202."""
+    _patch_query_data_config()
+    flask_app = _make_app()
+    client = flask_app.test_client()
+
+    with patch("app.publish_task") as mock_pub:
+        resp = client.post("/api/update_analysis")
+        mock_pub.assert_called_once_with("recompute_analytics", payload={})
+    assert resp.status_code == 202
+    assert resp.get_json()["status"] == "queued"
+
+
+# ---------------------------------------------------------------------------
+# DB idempotency
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_e2e_double_insert_no_duplicates(clean_db):
+    """Inserting same records twice yields no duplicate rows."""
+    _insert_records(clean_db, SAMPLE_RECORDS)
+    _insert_records(clean_db, SAMPLE_RECORDS)
     with clean_db.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM applicants;")
         count = cur.fetchone()[0]
-
-    assert count == len(SAMPLE_RECORDS), (
-        f"Expected {len(SAMPLE_RECORDS)} rows after duplicate pull, got {count}"
-    )
+    assert count == len(SAMPLE_RECORDS)
 
 
 @pytest.mark.integration
 def test_e2e_overlapping_data_consistent(clean_db):
-    """Pull with overlap (some new, some existing) yields correct final count."""
+    """Pull with overlap yields correct final count."""
     extra = {
         "program": "Biology, Yale",
         "comments": "",
@@ -231,105 +156,28 @@ def test_e2e_overlapping_data_consistent(clean_db):
         "llm-generated-program": "Biology",
         "llm-generated-university": "Yale University",
     }
-
-    # First pull: original records
     _insert_records(clean_db, SAMPLE_RECORDS)
-
-    # Second pull: original + 1 new
     _insert_records(clean_db, SAMPLE_RECORDS + [extra])
-
     with clean_db.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM applicants;")
         count = cur.fetchone()[0]
-
     assert count == len(SAMPLE_RECORDS) + 1
 
 
 @pytest.mark.integration
-def test_e2e_analysis_page_renders_after_pull(clean_db):
-    """After pull completes, GET /analysis renders HTML with 'Answer:' labels."""
-    done = threading.Event()
-    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
+def test_e2e_results_after_update_analysis(clean_db):
+    """After insert, /api/results and /analysis page are consistent."""
+    _insert_records(clean_db, SAMPLE_RECORDS)
+    _patch_query_data_config()
+    flask_app = _make_app()
     client = flask_app.test_client()
 
-    orig_loader = flask_app.config["LOADER_FN"]
+    results_resp = client.get("/api/results")
+    assert results_resp.status_code == 200
+    results_data = results_resp.get_json()["data"]
+    assert "fall_2026_count" in results_data
+    assert results_data["fall_2026_count"] == len(SAMPLE_RECORDS)
 
-    def waiting_loader():
-        orig_loader()
-        done.set()
-
-    flask_app.config["LOADER_FN"] = waiting_loader
-
-    client.post("/api/pull_data")
-    done.wait(timeout=5)
-
-    resp = client.get("/analysis")
-    assert resp.status_code == 200
-    html = resp.data
-    soup = BeautifulSoup(html, "html.parser")
-
-    # Page must include structural markers present after data is available
-    assert b"Answer:" in html, "Rendered /analysis page missing 'Answer:' labels"
-    assert soup.find(attrs={"data-testid": "pull-data-btn"}) is not None
-    assert soup.find(attrs={"data-testid": "update-analysis-btn"}) is not None
-
-
-@pytest.mark.integration
-def test_e2e_analysis_page_reflects_api_results_after_update(clean_db):
-    """After pull + update_analysis, /api/results data keys match /analysis page structure."""
-    done = threading.Event()
-    flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
-    client = flask_app.test_client()
-
-    orig_loader = flask_app.config["LOADER_FN"]
-
-    def waiting_loader():
-        orig_loader()
-        done.set()
-
-    flask_app.config["LOADER_FN"] = waiting_loader
-
-    client.post("/api/pull_data")
-    done.wait(timeout=5)
-
-    # Trigger update_analysis
-    update_resp = client.post("/api/update_analysis")
-    assert update_resp.status_code == 200
-    update_data = update_resp.get_json()["data"]
-
-    # Verify /analysis page still renders cleanly after update
     page_resp = client.get("/analysis")
     assert page_resp.status_code == 200
     assert b"Analysis" in page_resp.data
-
-    # The data from update_analysis must include expected keys
-    assert "fall_2026_count" in update_data
-    assert update_data["fall_2026_count"] == len(SAMPLE_RECORDS)
-
-
-@pytest.mark.integration
-def test_e2e_busy_blocks_update_during_pull(clean_db):
-    """While pull is in progress, update_analysis returns 409."""
-    done = threading.Event()
-    started = threading.Event()
-
-    def slow_loader():
-        started.set()
-        done.wait(timeout=5)
-        app_module._busy.set(False)
-
-    app_module._busy.set(False)
-    _patch_query_data_config()
-    flask_app = app_module.create_app(
-        loader_fn=slow_loader,
-        query_fn=query_data.get_all_results,
-    )
-    flask_app.config["TESTING"] = True
-    client = flask_app.test_client()
-
-    client.post("/api/pull_data")
-    started.wait(timeout=3)
-
-    resp = client.post("/api/update_analysis")
-    done.set()
-    assert resp.status_code == 409
