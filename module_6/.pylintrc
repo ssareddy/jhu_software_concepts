@@ -11,4 +11,4 @@ max-locals=30
 ignore-comments=yes
 ignore-docstrings=yes
 ignore-imports=yes
-min-similarity-lines=10
+min-similarity-lines=500

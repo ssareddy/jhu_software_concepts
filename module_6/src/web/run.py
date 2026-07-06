@@ -5,10 +5,9 @@ Flask entrypoint. Binds to 0.0.0.0:8080 for Docker.
 """
 import os
 import sys
+from app.app import create_app
 
 sys.path.insert(0, os.path.dirname(__file__))
-
-from app.app import create_app
 
 app = create_app()
 
