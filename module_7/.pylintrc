@@ -1,0 +1,14 @@
+[MASTER]
+ignored-modules=psycopg2,psycopg2.extras,selenium,selenium.webdriver,selenium.webdriver.chrome.options,selenium.webdriver.common.by,selenium.webdriver.support,selenium.webdriver.support.ui,pika
+
+[FORMAT]
+max-line-length=100
+
+[DESIGN]
+max-locals=30
+
+[SIMILARITIES]
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+min-similarity-lines=500
