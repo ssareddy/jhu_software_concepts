@@ -6,8 +6,8 @@ Publisher is mocked; DB operations are tested against the real test DB.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "db"))
 
 import re
@@ -16,7 +16,7 @@ import urllib.parse as up
 from unittest.mock import patch
 from bs4 import BeautifulSoup
 
-import query_data
+from app import query_data
 from conftest import SAMPLE_RECORDS, _insert_records, _reset_table, DB_URL
 
 
@@ -34,7 +34,7 @@ def _patch_query_data_config():
 
 def _make_app(query_fn=None):
     """Create a test app with mocked publisher."""
-    import app as app_module
+    from app import app as app_module
     flask_app = app_module.create_app(query_fn=query_fn or query_data.get_all_results)
     flask_app.config["TESTING"] = True
     flask_app.config["DATABASE_URL"] = DB_URL
@@ -103,7 +103,7 @@ def test_e2e_pull_data_publishes_task(clean_db):
     flask_app = _make_app()
     client = flask_app.test_client()
 
-    with patch("app.publish_task") as mock_pub:
+    with patch("app.app.publish_task") as mock_pub:
         resp = client.post("/api/pull_data")
         mock_pub.assert_called_once_with("scrape_new_data", payload={})
     assert resp.status_code == 202
@@ -117,7 +117,7 @@ def test_e2e_update_analysis_publishes_task(clean_db):
     flask_app = _make_app()
     client = flask_app.test_client()
 
-    with patch("app.publish_task") as mock_pub:
+    with patch("app.app.publish_task") as mock_pub:
         resp = client.post("/api/update_analysis")
         mock_pub.assert_called_once_with("recompute_analytics", payload={})
     assert resp.status_code == 202

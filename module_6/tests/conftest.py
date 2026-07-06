@@ -12,8 +12,8 @@ from psycopg2 import extras
 SRC_WEB = os.path.join(os.path.dirname(__file__), "..", "src", "web")
 SRC_WEB_APP = os.path.join(os.path.dirname(__file__), "..", "src", "web", "app")
 SRC_DB = os.path.join(os.path.dirname(__file__), "..", "src", "db")
-sys.path.insert(0, os.path.abspath(SRC_WEB))
 sys.path.insert(0, os.path.abspath(SRC_WEB_APP))
+sys.path.insert(0, os.path.abspath(SRC_WEB))
 sys.path.insert(0, os.path.abspath(SRC_DB))
 
 # ---------------------------------------------------------------------------
@@ -231,11 +231,11 @@ def mock_query_fn():
 def app(mock_query_fn):
     """Flask test app with mocked query and mocked publisher."""
     from unittest.mock import patch
-    import app as app_module
+    from app import app as app_module
     flask_app = app_module.create_app(query_fn=mock_query_fn)
     flask_app.config["TESTING"] = True
     flask_app.config["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
-    with patch("app.publish_task"):
+    with patch("app.app.publish_task"):
         yield flask_app
 
 
@@ -249,12 +249,12 @@ def client(app):
 def app_with_db(fake_query_fn):
     """Flask test app wired to the real test DB."""
     from unittest.mock import patch
-    import app as app_module
+    from app import app as app_module
     flask_app = app_module.create_app(query_fn=fake_query_fn)
     flask_app.config["TESTING"] = True
     flask_app.config["DATABASE_URL"] = DB_URL
     flask_app.config["RABBITMQ_URL"] = "amqp://guest:guest@localhost:5672/"
-    with patch("app.publish_task"):
+    with patch("app.app.publish_task"):
         yield flask_app
 
 

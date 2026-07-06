@@ -1,3 +1,6 @@
+-- db/init.sql
+-- Initializes schema on first stack start.
+
 CREATE TABLE IF NOT EXISTS applicants (
     p_id                  SERIAL PRIMARY KEY,
     content_hash          TEXT UNIQUE,
@@ -21,4 +24,10 @@ CREATE TABLE IF NOT EXISTS ingestion_watermarks (
     source      TEXT PRIMARY KEY,
     last_seen   TEXT,
     updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
+-- Analytics cache table updated by worker after recompute_analytics task
+CREATE TABLE IF NOT EXISTS analytics_cache (
+    key         TEXT PRIMARY KEY,
+    computed_at TIMESTAMPTZ DEFAULT now()
 );

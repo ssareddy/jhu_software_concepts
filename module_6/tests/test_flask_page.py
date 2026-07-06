@@ -5,8 +5,8 @@ Flask App & Page Rendering tests.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
 
 import pytest
 from bs4 import BeautifulSoup
@@ -119,7 +119,7 @@ def test_update_analysis_button_text(client):
 @pytest.mark.web
 def test_pull_data_returns_202(client):
     """POST /api/pull_data returns 202."""
-    with patch("app.publish_task"):
+    with patch("app.app.publish_task"):
         resp = client.post("/api/pull_data")
     assert resp.status_code == 202
 
@@ -127,7 +127,7 @@ def test_pull_data_returns_202(client):
 @pytest.mark.web
 def test_update_analysis_returns_202(client):
     """POST /api/update_analysis returns 202."""
-    with patch("app.publish_task"):
+    with patch("app.app.publish_task"):
         resp = client.post("/api/update_analysis")
     assert resp.status_code == 202
 

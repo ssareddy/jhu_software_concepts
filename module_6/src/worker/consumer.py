@@ -88,7 +88,17 @@ def handle_scrape_new_data(conn, payload: dict) -> None:
         if since is None:
             since = _get_watermark(cur, source)
         log.info("Scraping since: %s", since)
+
+        # Pass since to scraper to filter only newer records
         raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)
+
+        # Filter records newer than watermark if since is set
+        if since:
+            raw_records = [
+                r for r in raw_records
+                if r.get("date_added") and r["date_added"] > since
+            ]
+
         cleaned = clean_data(raw_records)
         if not cleaned:
             conn.commit()
@@ -120,9 +130,10 @@ def handle_scrape_new_data(conn, payload: dict) -> None:
 
 
 def handle_recompute_analytics(conn, _payload: dict) -> None:
-    """Recompute analytics within a transaction and commit."""
+    """Recompute analytics summary table within a transaction and commit."""
     log.info("Recomputing analytics...")
     with conn.cursor() as cur:
+        # Refresh materialized view if present
         cur.execute("""
             DO $$
             BEGIN
@@ -132,6 +143,13 @@ def handle_recompute_analytics(conn, _payload: dict) -> None:
                     REFRESH MATERIALIZED VIEW analytics_summary;
                 END IF;
             END $$;
+        """)
+        # Update analytics_cache table so UI reflects latest results
+        cur.execute("""
+            INSERT INTO analytics_cache (key, computed_at)
+            VALUES ('last_recompute', now())
+            ON CONFLICT (key) DO UPDATE
+                SET computed_at = EXCLUDED.computed_at;
         """)
     conn.commit()
     get_all_results()
@@ -168,7 +186,7 @@ def _on_message(ch, method, _properties, body):
         handler(conn, payload)
         ch.basic_ack(delivery_tag=method.delivery_tag)
         log.info("Task '%s' acknowledged.", kind)
-    except (psycopg2.DatabaseError, OSError, RuntimeError) as exc:
+    except (psycopg2.DatabaseError, OSError, RuntimeError, ValueError, KeyError) as exc:
         log.error("Handler error for '%s': %s", kind, exc)
         if conn:
             conn.rollback()

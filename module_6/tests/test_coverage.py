@@ -8,8 +8,8 @@ All tests use fakes/mocks — no live internet or Selenium.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web", "app"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "web"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "db"))
 
 import hashlib
@@ -21,7 +21,7 @@ import psycopg2
 import pytest
 from unittest.mock import MagicMock, patch, call
 
-import app as app_module
+from app import app as app_module
 import query_data
 import query_data as qd
 from clean import (
@@ -439,7 +439,7 @@ def test_api_results_uses_real_query_when_no_fn():
     flask_app = app_module.create_app()
     flask_app.config["TESTING"] = True
 
-    with patch("app.get_all_results", return_value=mock_results):
+    with patch("app.app.get_all_results", return_value=mock_results):
         client = flask_app.test_client()
         resp = client.get("/api/results")
 
@@ -453,7 +453,7 @@ def test_api_pull_data_publishes_and_returns_202():
     flask_app = app_module.create_app()
     flask_app.config["TESTING"] = True
 
-    with patch("app.publish_task") as mock_pub:
+    with patch("app.app.publish_task") as mock_pub:
         client = flask_app.test_client()
         resp = client.post("/api/pull_data")
         mock_pub.assert_called_once_with("scrape_new_data", payload={})
@@ -468,7 +468,7 @@ def test_api_update_analysis_publishes_and_returns_202():
     flask_app = app_module.create_app()
     flask_app.config["TESTING"] = True
 
-    with patch("app.publish_task") as mock_pub:
+    with patch("app.app.publish_task") as mock_pub:
         client = flask_app.test_client()
         resp = client.post("/api/update_analysis")
         mock_pub.assert_called_once_with("recompute_analytics", payload={})
@@ -483,7 +483,7 @@ def test_api_pull_data_returns_503_on_failure():
     flask_app = app_module.create_app()
     flask_app.config["TESTING"] = True
 
-    with patch("app.publish_task", side_effect=RuntimeError("RabbitMQ down")):
+    with patch("app.app.publish_task", side_effect=RuntimeError("RabbitMQ down")):
         client = flask_app.test_client()
         resp = client.post("/api/pull_data")
 
@@ -497,7 +497,7 @@ def test_api_update_analysis_returns_503_on_failure():
     flask_app = app_module.create_app()
     flask_app.config["TESTING"] = True
 
-    with patch("app.publish_task", side_effect=OSError("connection failed")):
+    with patch("app.app.publish_task", side_effect=OSError("connection failed")):
         client = flask_app.test_client()
         resp = client.post("/api/update_analysis")
 
@@ -796,6 +796,33 @@ def test_get_filtered_results_minimum_limit(monkeypatch):
 # ===========================================================================
 # consumer.py — unit tests for worker message handler
 # ===========================================================================
+
+@pytest.mark.web
+def test_consumer_handle_scrape_filters_by_watermark(monkeypatch):
+    """handle_scrape_new_data filters records older than watermark."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "worker"))
+    from consumer import handle_scrape_new_data
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = ("2024-03-01",)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    old_record = {
+        "program": "CS, MIT", "comments": "", "date_added": "2024-02-01",
+        "url": "https://example.com/old", "status": "Accepted",
+        "term": "Fall 2026", "US/International": "American",
+        "GPA": "3.9", "GRE": "335", "GRE V": "165", "GRE AW": "4.5",
+        "Degree": "PhD", "llm-generated-program": "CS",
+        "llm-generated-university": "MIT",
+    }
+
+    with patch("consumer.scrape_data", return_value=[old_record]), \
+         patch("consumer.clean_data", return_value=[old_record]):
+        handle_scrape_new_data(mock_conn, {})
+
+    mock_conn.commit.assert_called_once()
+
 
 @pytest.mark.web
 def test_consumer_parse_float_valid():

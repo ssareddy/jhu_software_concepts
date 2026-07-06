@@ -18,7 +18,7 @@ No credentials are hard-coded here.
 import psycopg2
 
 from psycopg2 import sql
-from db_config import get_db_config
+from app.db_config import get_db_config
 
 # Re-export DB_CONFIG as a mutable dict so tests can patch it without
 # touching the environment.  Always reflects the current environment at

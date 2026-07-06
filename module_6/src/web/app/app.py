@@ -10,7 +10,7 @@ import os
 import psycopg2
 from flask import Flask, current_app, jsonify, render_template
 
-from query_data import get_all_results
+from app.query_data import get_all_results
 from publisher import publish_task
 
 
