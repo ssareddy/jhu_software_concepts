@@ -76,13 +76,13 @@ See `ec2/EC2_DEPLOYMENT.md` for exact deployment steps.
 
 ### Quick Start
 ```bash
-ssh -i /path/to/module7-key.pem ubuntu@13.58.35.53
+ssh -i /path/to/module7-key.pem ubuntu@18.222.232.131
 cd module7
 docker compose -f docker-compose.ec2.yml --env-file .env up -d
 ```
 
 ### Live App
-- Web dashboard: http://13.58.35.53:8080
+- Web dashboard: http://18.222.232.131:8080
 - Docker Hub images: https://hub.docker.com/r/scharfshutzer/module_6
 
 ---

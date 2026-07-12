@@ -3,7 +3,7 @@
 ## Instance Details
 - **AMI:** Ubuntu 24.04 LTS
 - **Instance type:** t3.micro
-- **Public IPv4:** 13.58.35.53
+- **Public IPv4:** 18.222.232.131
 - **Security group:** SSH (22) and port 8080 restricted to student IP only
 
 ## Steps Taken
@@ -19,7 +19,7 @@
 
 ### 2. SSH Into Instance
 ```bash
-ssh -i /path/to/module7-key.pem ubuntu@13.58.35.53
+ssh -i /path/to/module7-key.pem ubuntu@18.222.232.131
 ```
 
 ### 3. Install Docker and Docker Compose
@@ -120,7 +120,7 @@ docker compose -f docker-compose.ec2.yml ps
 ```
 
 ### 8. Verify
-- Flask app reachable at: http://13.58.35.53:8080
+- Flask app reachable at: http://18.222.232.131:8080
 - Pull Data and Update Analysis buttons verified working
 - Worker processes tasks via RabbitMQ
 

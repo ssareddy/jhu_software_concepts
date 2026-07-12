@@ -43,6 +43,8 @@ services:
       SEED_JSON: ${SEED_JSON}
       TARGET_TABLE: ${TARGET_TABLE}
       ID_KEY: ${ID_KEY}
+    volumes:
+      - ./data:/data:ro
     depends_on:
       db:
         condition: service_healthy

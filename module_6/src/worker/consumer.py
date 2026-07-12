@@ -197,11 +197,12 @@ def _on_message(ch, method, _properties, body):
 
 
 def main():  # pragma: no cover
-    """Start the RabbitMQ consumer loop with retry on connection failure."""
+    """Start the RabbitMQ consumer loop with retry on any failure."""
     url = os.environ["RABBITMQ_URL"]
     params = pika.URLParameters(url)
 
     while True:
+        conn = None
         try:
             conn = pika.BlockingConnection(params)
             ch = conn.channel()
@@ -212,9 +213,21 @@ def main():  # pragma: no cover
             ch.basic_consume(queue=QUEUE, on_message_callback=_on_message)
             log.info("Worker ready on queue '%s'...", QUEUE)
             ch.start_consuming()
-        except pika.exceptions.AMQPConnectionError as exc:
-            log.warning("Connection failed: %s — retrying in 5s...", exc)
+        except (pika.exceptions.AMQPConnectionError,
+                pika.exceptions.AMQPChannelError,
+                pika.exceptions.ConnectionClosedByBroker,
+                pika.exceptions.StreamLostError) as exc:
+            log.warning("Connection lost: %s — retrying in 5s...", exc)
             time.sleep(5)
+        except (KeyboardInterrupt, SystemExit):
+            log.info("Worker shutting down.")
+            break
+        finally:
+            if conn and not conn.is_closed:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 if __name__ == "__main__":  # pragma: no cover

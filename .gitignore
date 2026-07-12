@@ -1,0 +1,30 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Coverage
+.coverage
+coverage_summary.txt
+htmlcov/
+
+# Pytest
+.pytest_cache/
+
+# Sphinx docs build
+docs/_build/
+docs/build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
