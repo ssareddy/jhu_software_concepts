@@ -1,0 +1,19 @@
+,missing_count,missing_percentage
+GRE AW,28193,93.98
+GRE V,27993,93.31
+GRE,27595,91.98
+rejection_date,15937,53.12
+acceptance_date,14063,46.88
+GPA,11926,39.75
+US/International,450,1.5
+Degree,169,0.56
+program_raw,8,0.03
+program,0,0.0
+university_raw,0,0.0
+term,0,0.0
+date_added,0,0.0
+url,0,0.0
+comments,0,0.0
+status,0,0.0
+llm-generated-program,0,0.0
+llm-generated-university,0,0.0
