@@ -290,21 +290,48 @@ def find_cluster_by_keyword(
     return int(matches[cluster_col].mode().iloc[0])
 
 
-def plot_gre_boxplot(
-    df: pd.DataFrame, cluster_label: str, output_path: Path
-) -> None:
-    """Plot GRE and GRE V distributions for a cluster as a boxplot.
+def report_gre_summary(df: pd.DataFrame, cluster_label: str) -> tuple:
+    """Compute and print GRE / GRE V summary statistics for a cluster.
 
     Args:
         df: DataFrame subset belonging to a single cluster, containing
             "GRE" and "GRE V" columns.
         cluster_label: Human-readable name for the cluster (used in the
-            plot title).
-        output_path: File path to save the resulting PNG to.
+            printed report).
+
+    Returns:
+        A tuple of (GRE Series, GRE V Series) with missing values dropped,
+        for reuse by the boxplot step.
     """
     gre = pd.to_numeric(df["GRE"], errors="coerce").dropna()
     gre_v = pd.to_numeric(df["GRE V"], errors="coerce").dropna()
 
+    print(f"\n=== GRE / GRE V Summary - {cluster_label} Cluster ===")
+    for name, series in (("GRE", gre), ("GRE V", gre_v)):
+        if len(series) > 0:
+            print(
+                f"{name}: n={len(series)}, min={series.min():.1f}, "
+                f"max={series.max():.1f}, mean={series.mean():.2f}, "
+                f"median={series.median():.1f}"
+            )
+        else:
+            print(f"{name}: no valid values in this cluster")
+
+    return gre, gre_v
+
+
+def plot_gre_boxplot(
+    gre: pd.Series, gre_v: pd.Series, cluster_label: str, output_path: Path
+) -> None:
+    """Plot GRE and GRE V distributions for a cluster as a boxplot.
+
+    Args:
+        gre: Cleaned GRE score values for the cluster.
+        gre_v: Cleaned GRE V score values for the cluster.
+        cluster_label: Human-readable name for the cluster (used in the
+            plot title).
+        output_path: File path to save the resulting PNG to.
+    """
     fig, ax = plt.subplots(figsize=(8, 6))
     box_data = [gre, gre_v]
     box_labels = [f"GRE (n={len(gre)})", f"GRE V (n={len(gre_v)})"]
@@ -351,14 +378,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    """Run the full Module 9 clustering pipeline."""
-    args = parse_args()
-    output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
+def run_initial_clustering(input_path: Path, output_dir: Path) -> tuple:
+    """Run Section 1: load, clean, vectorize, and produce initial clusters.
 
-    # --- Section 1: Initial K-Means clustering ---
-    raw_df = load_data(args.input)
+    Args:
+        input_path: Path to the raw Grad Cafe JSON dataset.
+        output_dir: Directory to write output PNG files to.
+
+    Returns:
+        A tuple of (cleaned DataFrame with an "initial_cluster" column,
+        fitted TF-IDF sparse matrix).
+    """
+    raw_df = load_data(input_path)
     df = clean_program_university(raw_df)
     report_dataset_stats(df)
 
@@ -375,15 +406,38 @@ def main() -> None:
         n_rows=100,
         output_path=output_dir / "clustered_dataFrame.png",
     )
+    return df, tfidf_matrix
 
-    # --- Section 2: Determine the optimal number of clusters ---
+
+def run_elbow_analysis(tfidf_matrix, output_dir: Path) -> np.ndarray:
+    """Run Section 2: expand PCA and produce the elbow-method plot.
+
+    Args:
+        tfidf_matrix: Fitted TF-IDF sparse matrix from Section 1.
+        output_dir: Directory to write output PNG files to.
+
+    Returns:
+        The higher-dimensional PCA-reduced feature array used for the
+        elbow sweep, reused for final clustering in Section 3.
+    """
     _, pca_wide = reduce_dimensions(
         tfidf_matrix, n_components=ELBOW_PCA_COMPONENTS
     )
     inertias = compute_elbow_inertias(pca_wide, max_k=ELBOW_MAX_K)
     plot_elbow(inertias, output_dir / "elbow.png")
+    return pca_wide
 
-    # --- Section 3: Final clustering and cluster-based analysis ---
+
+def run_final_analysis(
+    df: pd.DataFrame, pca_wide: np.ndarray, output_dir: Path
+) -> None:
+    """Run Section 3: final clustering and GRE/GRE V cluster analysis.
+
+    Args:
+        df: Cleaned DataFrame from Section 1.
+        pca_wide: Higher-dimensional PCA features from Section 2.
+        output_dir: Directory to write output PNG files to.
+    """
     _, final_labels = run_kmeans(pca_wide, n_clusters=FINAL_N_CLUSTERS)
     df["cluster"] = final_labels
 
@@ -391,17 +445,24 @@ def main() -> None:
     philosophy_cluster = find_cluster_by_keyword(df, "Philosophy", "cluster")
 
     if cs_cluster is not None:
-        cs_df = df[df["cluster"] == cs_cluster]
+        cs_gre, cs_gre_v = report_gre_summary(
+            df[df["cluster"] == cs_cluster], "Computer Science"
+        )
         plot_gre_boxplot(
-            cs_df, "Computer Science", output_dir / "computer_science.png"
+            cs_gre,
+            cs_gre_v,
+            "Computer Science",
+            output_dir / "computer_science.png",
         )
     else:
         print("No Computer Science-like cluster found.")
 
     if philosophy_cluster is not None:
-        philosophy_df = df[df["cluster"] == philosophy_cluster]
+        phil_gre, phil_gre_v = report_gre_summary(
+            df[df["cluster"] == philosophy_cluster], "Philosophy"
+        )
         plot_gre_boxplot(
-            philosophy_df, "Philosophy", output_dir / "philosophy.png"
+            phil_gre, phil_gre_v, "Philosophy", output_dir / "philosophy.png"
         )
     else:
         print("No Philosophy-like cluster found.")
@@ -415,6 +476,17 @@ def main() -> None:
     # literal out-of-scale placeholder values (e.g. 999). Both are signs
     # that further data cleaning is needed before GRE can be trusted for
     # legitimate score analysis.
+
+
+def main() -> None:
+    """Run the full Module 9 clustering pipeline."""
+    args = parse_args()
+    output_dir = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    df, tfidf_matrix = run_initial_clustering(args.input, output_dir)
+    pca_wide = run_elbow_analysis(tfidf_matrix, output_dir)
+    run_final_analysis(df, pca_wide, output_dir)
 
 
 if __name__ == "__main__":

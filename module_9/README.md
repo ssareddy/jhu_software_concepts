@@ -64,6 +64,10 @@ Python 3.10+ and the exact package versions pinned in `requirements.txt`
 | `philosophy.png`          | GRE / GRE V boxplot for the Philosophy-like cluster                         |
 | `computer_science.png`    | GRE / GRE V boxplot for the Computer-Science-like cluster                   |
 
+In addition to the PNG files, the script prints GRE / GRE V summary
+statistics (n, min, max, mean, median) for both the Computer Science-like
+and Philosophy-like clusters to the console before generating each boxplot.
+
 ## Notes
 
 GRE and GRE V values are intentionally left unfiltered (not restricted to the
