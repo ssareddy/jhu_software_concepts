@@ -24,7 +24,7 @@ The pipeline:
    inertia vs. cluster count, informing the choice of ~85 final clusters.
 5. **Final clustering & analysis** — re-clusters at the selected cluster
    count, attaches labels back to the full cleaned dataset, and produces
-   boxplots comparing GRE / GRE V scores for a Computer-Science-like cluster
+   box plots comparing GRE / GRE V scores for a Computer-Science-like cluster
    and a Philosophy-like cluster.
 
 ## How to run
@@ -56,19 +56,19 @@ Python 3.10+ and the exact package versions pinned in `requirements.txt`
 
 ## Expected outputs
 
-| File | Description |
-|---|---|
-| `initial_cluster.png` | 2D PCA scatter plot colored by the initial 50-cluster K-Means assignment |
-| `clustered_dataFrame.png` | 100-row rendered sample of Program / University / initial cluster |
-| `elbow.png` | Inertia vs. cluster count (elbow method), used to select ~85 final clusters |
-| `philosophy.png` | GRE / GRE V boxplot for the Philosophy-like cluster |
-| `computer_science.png` | GRE / GRE V boxplot for the Computer-Science-like cluster |
+| File                      | Description                                                                 |
+|---------------------------|-----------------------------------------------------------------------------|
+| `initial_cluster.png`     | 2D PCA scatter plot colored by the initial 50-cluster K-Means assignment    |
+| `clustered_dataFrame.png` | 100-row rendered sample of Program / University / initial cluster           |
+| `elbow.png`               | Inertia vs. cluster count (elbow method), used to select ~85 final clusters |
+| `philosophy.png`          | GRE / GRE V boxplot for the Philosophy-like cluster                         |
+| `computer_science.png`    | GRE / GRE V boxplot for the Computer-Science-like cluster                   |
 
 ## Notes
 
 GRE and GRE V values are intentionally left unfiltered (not restricted to the
 real score range) so that data-quality issues present in the raw data are
-visible in the boxplots rather than being cleaned away — this is meant to
+visible in the box plots rather than being cleaned away — this is meant to
 surface an issue that motivates further cleaning in a later step, not to
 hide it. On this dataset, the resulting Computer Science boxplot reveals
 that a meaningful share of "GRE" values (roughly 15% of valid entries) fall
