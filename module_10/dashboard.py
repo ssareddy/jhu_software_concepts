@@ -31,15 +31,28 @@ IMG_STYLE = {
     "margin": "0 auto",
 }
 
-CONCLUSION_TEXT = (
-    "Carat weight is by far the strongest predictor of price (r = 0.92), "
-    "and dominates the raw averages so heavily that lower-cut, larger "
-    "stones can appear more expensive on average than smaller, higher-cut "
-    "ones. Once price is normalized per carat, cut, color, and clarity "
-    "grade all show a clear, monotonic price premium as quality improves, "
-    "confirming that price is jointly explained by size and quality "
-    "features rather than size alone."
-)
+def build_conclusion_text(df) -> str:
+    """Build the guiding conclusion text, computing the correlation live.
+
+    Args:
+        df: Cleaned diamonds DataFrame.
+
+    Returns:
+        The conclusion paragraph, with the carat/price correlation
+        computed from the actual data rather than typed in as a fixed
+        number.
+    """
+    carat_price_corr = df["carat"].corr(df["price"])
+    return (
+        f"Carat weight is by far the strongest predictor of price "
+        f"(r = {carat_price_corr:.2f}), and dominates the raw averages so "
+        "heavily that lower-cut, larger stones can appear more expensive "
+        "on average than smaller, higher-cut ones. Once price is "
+        "normalized per carat, cut, color, and clarity grade all show a "
+        "clear, monotonic price premium as quality improves, confirming "
+        "that price is jointly explained by size and quality features "
+        "rather than size alone."
+    )
 
 
 def build_app(df) -> Dash:
@@ -53,6 +66,7 @@ def build_app(df) -> Dash:
     """
     app = Dash(__name__)
     animated_fig = build_animated_price_scatter_figure(df)
+    conclusion_text = build_conclusion_text(df)
 
     app.layout = html.Div(
         style={
@@ -64,7 +78,7 @@ def build_app(df) -> Dash:
         children=[
             html.H1(RESEARCH_QUESTION, style={"textAlign": "center"}),
             html.P(
-                CONCLUSION_TEXT,
+                conclusion_text,
                 style={
                     "textAlign": "center",
                     "fontSize": "16px",
