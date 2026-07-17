@@ -83,7 +83,7 @@ def build_app(df) -> Dash:
                 style={**IMG_STYLE, "maxWidth": "700px"},
             ),
             html.H2("Interactive Explorer: Price vs. Carat, Animated by Cut"),
-            dcc.Graph(figure=animated_fig),
+            dcc.Graph(figure=animated_fig, config={"displayModeBar": False}),
         ],
     )
     return app
