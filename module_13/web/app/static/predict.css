@@ -2,16 +2,9 @@
    predict.css  –  "Will You Get In?" page
    Extends style.css's existing navy/cream/gold design tokens rather than
    redefining them, so the prediction page stays visually consistent with
-   the Analysis page.
+   the Analysis page. The shared .header-nav .nav-link rule now lives in
+   style.css itself, since both pages use it.
    ───────────────────────────────────────────────────────────────────────── */
-
-.header-nav .nav-link {
-  color: var(--accent-lt);
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-.header-nav .nav-link:hover { text-decoration: underline; }
 
 .predict-main {
   max-width: 900px;

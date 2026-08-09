@@ -27,6 +27,15 @@
   --shadow-md:  0 4px 24px rgba(15,30,54,.13);
 }
 
+/* ── Cross-page header navigation link ───────────────────────────────── */
+.header-nav .nav-link {
+  color: var(--accent-lt);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.header-nav .nav-link:hover { text-decoration: underline; }
+
 /* ── Reset & Base ─────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
