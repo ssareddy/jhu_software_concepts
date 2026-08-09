@@ -23,7 +23,7 @@ import sys
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env.example"))
 
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.join(BASE_DIR, "web"))
