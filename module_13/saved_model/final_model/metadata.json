@@ -1,0 +1,41 @@
+{
+  "label_mapping": {
+    "0": "Rejected",
+    "1": "Accepted"
+  },
+  "model_name": "distilbert-base-uncased",
+  "tokenizer_name": "distilbert-base-uncased",
+  "max_length": 256,
+  "template": "Program: {program}\nUniversity: {university}\nComments: {comments}\nTerm: {term}\nDegree: {degree}\nCitizenship: {citizenship}\nGPA: {gpa}\nGRE: {gre}\nGRE Verbal: {gre_v}\nGRE AW: {gre_aw}",
+  "text_fields": [
+    "llm-generated-program",
+    "llm-generated-university",
+    "comments",
+    "term"
+  ],
+  "nontext_fields": [
+    "Degree",
+    "US/International",
+    "GPA",
+    "GRE",
+    "GRE V",
+    "GRE AW"
+  ],
+  "metrics": {
+    "accuracy": 0.7896730462519936,
+    "precision": 0.7542932628797886,
+    "recall": 0.7751131221719457,
+    "f1": 0.7645614818120955,
+    "confusion_matrix": [
+      [
+        2248,
+        558
+      ],
+      [
+        497,
+        1713
+      ]
+    ],
+    "n_test": 5016
+  }
+}

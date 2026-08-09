@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Will You Get In? — Grad School Café Data Analysis</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='predict.css') }}" />
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="header-inner">
+      <div class="header-title">
+        <span class="header-icon">🎓</span>
+        <h1>Will You <span class="accent">Get In?</span></h1>
+      </div>
+      <nav class="header-nav">
+        <a href="{{ url_for('index') }}" class="nav-link">← Back to Analysis</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Main content ────────────────────────────────────────────────────── -->
+  <main class="predict-main">
+
+    <div class="disclaimer-banner">
+      <strong>⚠ Class project, not a real admissions tool.</strong>
+      This prediction comes from a DistilBERT language model fine-tuned on
+      scraped, self-reported Grad Café data for a graduate course assignment.
+      It reflects patterns in that dataset only — not an actual admissions
+      committee's decision-making, official criteria, or guarantee of any
+      outcome. Please do not use this to make real academic or financial
+      decisions.
+    </div>
+
+    <section class="section-title">
+      <h2>Enter Applicant Information</h2>
+      <p class="subtitle">All fields are optional — the model will treat any blank field as "Unknown."</p>
+    </section>
+
+    {% if model_unavailable %}
+    <div class="error-state" data-testid="model-unavailable">
+      The prediction model isn't available on this server yet. Run
+      <code>train_model.py</code> to train and save a model, then restart
+      the app.
+    </div>
+    {% endif %}
+
+    <form id="predict-form" class="predict-form" {% if model_unavailable %}aria-disabled="true"{% endif %}>
+      <div class="form-grid">
+
+        <div class="form-field">
+          <label for="program">Program</label>
+          <input type="text" id="program" name="program" placeholder="e.g. Computer Science" maxlength="200" />
+        </div>
+
+        <div class="form-field">
+          <label for="university">University</label>
+          <input type="text" id="university" name="university" placeholder="e.g. Johns Hopkins University" maxlength="200" />
+        </div>
+
+        <div class="form-field form-field-wide">
+          <label for="comments">Comments / Applicant Statement</label>
+          <textarea id="comments" name="comments" rows="4"
+            placeholder="e.g. Applied for AI track, have research experience and one publication."
+            maxlength="2000"></textarea>
+        </div>
+
+        <div class="form-field">
+          <label for="term">Term</label>
+          <select id="term" name="term">
+            <option value="">Unknown</option>
+            <option>Fall 2026</option>
+            <option>Spring 2026</option>
+            <option>Fall 2027</option>
+            <option>Spring 2027</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="degree">Degree</label>
+          <select id="degree" name="degree">
+            <option value="">Unknown</option>
+            <option>PhD</option>
+            <option>Master's</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="citizenship">Citizenship</label>
+          <select id="citizenship" name="citizenship">
+            <option value="">Unknown</option>
+            <option>American</option>
+            <option>International</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="gpa">GPA</label>
+          <input type="number" id="gpa" name="gpa" step="0.01" min="0" max="4.33" placeholder="e.g. 3.87" />
+        </div>
+
+        <div class="form-field">
+          <label for="gre">GRE</label>
+          <input type="number" id="gre" name="gre" step="1" min="0" max="340" placeholder="e.g. 320" />
+        </div>
+
+        <div class="form-field">
+          <label for="gre_v">GRE Verbal</label>
+          <input type="number" id="gre_v" name="gre_v" step="1" min="0" max="170" placeholder="e.g. 160" />
+        </div>
+
+        <div class="form-field">
+          <label for="gre_aw">GRE AW</label>
+          <input type="number" id="gre_aw" name="gre_aw" step="0.5" min="0" max="6" placeholder="e.g. 4.5" />
+        </div>
+
+      </div>
+
+      <button type="submit" id="btn-predict" class="btn btn-predict" data-testid="predict-btn"
+        {% if model_unavailable %}disabled{% endif %}>
+        🔮 Predict My Odds
+      </button>
+    </form>
+
+    <div id="result-container" class="result-container hidden" data-testid="predict-result">
+      <!-- Filled in by JS -->
+    </div>
+
+  </main>
+
+  <script>
+    const form = document.getElementById("predict-form");
+    const resultContainer = document.getElementById("result-container");
+
+    function showResult(html, type) {
+      resultContainer.innerHTML = html;
+      resultContainer.className = `result-container ${type}`;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("btn-predict");
+      btn.disabled = true;
+      btn.textContent = "Predicting…";
+      showResult(`<p class="result-loading">Running the model…</p>`, "loading");
+
+      const data = Object.fromEntries(new FormData(form).entries());
+
+      try {
+        const res = await fetch("/api/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const json = await res.json();
+
+        if (json.status === "ok") {
+          const isAccept = json.prediction === "Accepted";
+          showResult(`
+            <p class="result-headline ${isAccept ? "accept" : "reject"}">
+              Prediction: <strong>${json.prediction}</strong>
+            </p>
+            <p class="result-score">Model score: <strong>${json.score.toFixed(2)}</strong>
+              &nbsp;(P(Accepted) = ${json.prob_accepted.toFixed(2)})</p>
+            <p class="result-footnote">Remember: this is a class project model, not a real admissions decision.</p>
+          `, isAccept ? "success" : "info");
+        } else {
+          showResult(`<p class="result-error">${json.message || "Something went wrong. Please try again."}</p>`, "error");
+        }
+      } catch (err) {
+        showResult(`<p class="result-error">Could not reach the server. Please try again.</p>`, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "🔮 Predict My Odds";
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   predict.css  –  "Will You Get In?" page
+   Extends style.css's existing navy/cream/gold design tokens rather than
+   redefining them, so the prediction page stays visually consistent with
+   the Analysis page.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.header-nav .nav-link {
+  color: var(--accent-lt);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.header-nav .nav-link:hover { text-decoration: underline; }
+
+.predict-main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+  width: 100%;
+}
+
+/* ── Disclaimer banner ───────────────────────────────────────────────── */
+.disclaimer-banner {
+  background: var(--sand);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 28px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+.disclaimer-banner strong { color: var(--warning); }
+
+/* ── Form ─────────────────────────────────────────────────────────────── */
+.predict-form {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.form-field-wide { grid-column: 1 / -1; }
+
+.form-field { display: flex; flex-direction: column; gap: 6px; }
+
+.form-field label {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--navy);
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 0.95rem;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--cream);
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(201, 146, 42, 0.15);
+}
+
+.form-field textarea { resize: vertical; }
+
+.btn-predict {
+  margin-top: 24px;
+  width: 100%;
+  background: var(--navy);
+  color: #fff;
+  font-size: 1.05rem;
+  padding: 14px;
+}
+.btn-predict:not(:disabled):hover { background: var(--navy-mid); }
+.btn-predict:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Result panel ─────────────────────────────────────────────────────── */
+.result-container {
+  margin-top: 24px;
+  padding: 22px 26px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.result-container.hidden { display: none; }
+
+.result-container.loading { background: var(--sand); color: var(--text-muted); }
+.result-container.success { background: #eef7f1; border-color: var(--success); }
+.result-container.info    { background: #fdf3e4; border-color: var(--accent); }
+.result-container.error   { background: #fbeaea; border-color: var(--error); }
+
+.result-headline { font-size: 1.4rem; margin-bottom: 6px; font-family: 'Playfair Display', serif; }
+.result-headline.accept { color: var(--success); }
+.result-headline.reject { color: var(--warning); }
+
+.result-score { font-size: 1rem; color: var(--text); margin-bottom: 8px; }
+.result-footnote { font-size: 0.85rem; color: var(--text-muted); font-style: italic; }
+.result-error { color: var(--error); font-weight: 600; }
+
+.error-state {
+  background: #fbeaea;
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  color: var(--error);
+  margin-bottom: 20px;
+}
+.error-state code {
+  background: rgba(0,0,0,0.06);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
+}

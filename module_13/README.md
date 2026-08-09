@@ -1,0 +1,128 @@
+# Module 13 — Scale & LM Deployment
+
+A DistilBERT model fine-tuned on Grad Cafe admissions data (text + structured
+fields) predicts Accepted/Rejected, integrated into a new "Will You Get In?"
+page on the existing Flask admissions website.
+
+## Contents
+
+```
+module_13/
+├── train_model.py            # Sections 1-6: data prep, unified text template,
+│                              # train/test split, fine-tuning, evaluation, save
+├── inference.py               # Reload + predict helper; also runnable standalone
+│                              # for the Section 6 reload demonstration
+├── model_common.py            # Single source of truth for the unified text
+│                              # template and value formatting, imported by both
+│                              # train_model.py and inference.py so training and
+│                              # serving can never format inputs differently
+├── run.py                     # Flask entrypoint (starts the full website)
+├── requirements.txt
+├── writeup.pdf
+├── training_output_full_run.log   # Full Sections 1-6 output from the real,
+│                                   # non-subsampled training run
+├── section_6_reload_output.log    # Reload + inference demonstration output
+├── screenshots/
+│   ├── screenshot_blank_page.png
+│   └── screenshot_completed_prediction.png
+├── saved_model/
+│   └── final_model/           # Trained weights, tokenizer, and metadata.json
+│                               # >> See "Getting the Trained Model" below <<
+└── web/
+    ├── app/
+    │   ├── app.py              # Flask app factory + routes (Analysis + Predict)
+    │   ├── query_data.py, db_config.py, clean.py   # From Module 6, unchanged
+    │   ├── templates/
+    │   │   ├── index.html            # Existing Analysis page (unchanged)
+    │   │   └── will_you_get_in.html  # New prediction page
+    │   └── static/
+    │       ├── style.css      # Existing site styling (unchanged)
+    │       └── predict.css    # New page's styling (matches existing tokens)
+    └── publisher.py            # From Module 6 (RabbitMQ), unchanged
+```
+
+## Install
+
+```bash
+pip install -r requirements.txt
+```
+
+## 1. Train the Model
+
+```bash
+python train_model.py --sample_size 0 --epochs 5
+```
+
+- `--sample_size 0` uses the full training set. Any other integer subsamples
+  that many rows for a quick pipeline check on limited hardware.
+- `--epochs`, `--batch_size`, `--max_length`, `--lr` are all overridable;
+  defaults match the assignment's recommended baseline configuration.
+- Prints all required Section 1–6 output (row counts, template, split sizes,
+  training logs, evaluation metrics, confusion matrix, save confirmation).
+  See `training_output_full_run.log` for the actual output from the full run
+  used throughout `writeup.pdf`.
+- Saves the trained model, tokenizer, and metadata to `saved_model/final_model/`.
+
+**Hardware note:** the full run (5 epochs, 20,061 training rows) took
+roughly 10 minutes total on a GPU. On CPU only, expect substantially longer
+per epoch — a GPU is strongly recommended for the full run; use
+`--sample_size` for a fast correctness check on CPU-only hardware.
+
+## 2. Run Inference Standalone (No Web App)
+
+```bash
+python inference.py
+```
+
+Reloads the saved model (no retraining) and runs two example predictions.
+See `section_6_reload_output.log` for real output from this step.
+
+## 3. Getting the Trained Model
+
+> **[Placeholder — pending decision.]** The trained model weights
+> (`saved_model/final_model/model.safetensors`, ~256MB) exceed GitHub's
+> 100MB per-file limit for a normal push. This section will document
+> exactly how to obtain/place the trained model before running the
+> website, once that approach is finalized.
+
+## 4. Start the Website
+
+```bash
+python run.py
+```
+
+Visit:
+- `http://localhost:8080/` — existing Grad Cafe Analysis page
+- `http://localhost:8080/will-you-get-in` — new admissions prediction page
+
+The model is loaded **once** at process startup (see `web/app/app.py`), not
+on every page visit or form submission.
+
+## Design Notes
+
+- **Unified text template** (Section 2) lives in exactly one place,
+  `model_common.py`, imported identically by `train_model.py` (training)
+  and `inference.py` (inference / Flask form submission), so there is never
+  a training/serving format mismatch. Numeric values are formatted with
+  Python's general float format regardless of whether they arrive as a
+  DataFrame float or a user-submitted string, so e.g. a form submission of
+  `"3.90"` produces identical model input text to a training-time value of
+  `3.9`.
+- **No label leakage**: the template builder only ever reads applicant
+  feature fields, never the Accepted/Rejected outcome.
+- **Missing values**: normalized to a consistent `"Unknown"` placeholder at
+  both training and inference time.
+- **Safeguards on the webpage**: blank/missing fields, non-numeric GPA/GRE
+  input, and a missing/untrained model are all handled gracefully with
+  friendly messages — the Flask app never crashes or shows a raw traceback.
+- **Disclaimer**: shown prominently on the prediction page, above the form.
+
+## Known Limitations
+
+See `writeup.pdf` for the full reflection. In brief: the dataset is
+self-reported and scraped (Grad Cafe), with heavy missingness in
+GRE-related fields and no access to recommendation letters, personal
+statements, or funding availability — all of which matter in real
+admissions decisions. This model should be treated strictly as a course
+project demonstrating the ML/deployment pipeline, not a real admissions
+predictor.
