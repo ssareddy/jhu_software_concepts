@@ -1,7 +1,7 @@
 """
 clean.py — Grad Cafe Data Cleaner
 -----------------------------------
-Converts raw scraped records (produced by incremental_scraper.py) into structured,
+Converts raw scraped records (produced by scrape.py) into structured,
 clean JSON objects using Python string methods and regex.
 
 Note: University and program name standardization is handled separately
@@ -225,70 +225,6 @@ def _extract_date(text: str) -> str | None:
     return None
 
 
-def _extract_decision_date(raw_notes: str, raw_date: str) -> str | None:
-    """
-    Extract the actual decision date, preferring a date embedded in the
-    status note (e.g. 'Accepted on Apr 17', 'Rejected via email on Mar 3 2024')
-    over the raw_date field, which often reflects the post submission date
-    rather than the actual decision date.
-
-    Falls back to raw_date only when no date can be found in the notes.
-    """
-    months = {
-        "january": 1, "february": 2, "march": 3, "april": 4,
-        "may": 5, "june": 6, "july": 7, "august": 8,
-        "september": 9, "october": 10, "november": 11, "december": 12,
-        "jan": 1, "feb": 2, "mar": 3, "apr": 4,
-        "jun": 6, "jul": 7, "aug": 8,
-        "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-    }
-
-    # Look for status-keyed date phrases in notes:
-    # "Accepted on Apr 17", "Rejected via email Mar 3, 2024", "Interviewed on 2024-02-01"
-    status_date_pattern = re.compile(
-        r"(?:accepted|rejected|waitlisted|interview(?:ed)?)"
-        r"(?:\s+(?:on|via\s+\S+\s+on?|via\s+\S+))?"
-        r"\s+"
-        r"("
-        r"\d{4}-\d{1,2}-\d{1,2}"                        # ISO
-        r"|[A-Za-z]+\s+\d{1,2}(?:,\s*\d{4})?"           # Month Day or Month Day, Year
-        r"|\d{1,2}/\d{1,2}/\d{4}"                        # MM/DD/YYYY
-        r")",
-        re.I,
-    )
-
-    m = status_date_pattern.search(raw_notes)
-    if m:
-        candidate = m.group(1).strip()
-
-        # ISO
-        iso = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", candidate)
-        if iso:
-            return f"{iso.group(1)}-{int(iso.group(2)):02d}-{int(iso.group(3)):02d}"
-
-        # MM/DD/YYYY
-        mdy = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", candidate)
-        if mdy:
-            return f"{mdy.group(3)}-{int(mdy.group(1)):02d}-{int(mdy.group(2)):02d}"
-
-        # Month Day, Year  or  Month Day  (no year in notes → borrow from raw_date)
-        mdn = re.match(r"([A-Za-z]+)\s+(\d{1,2})(?:,\s*(\d{4}))?", candidate)
-        if mdn:
-            month_str = mdn.group(1).lower()
-            if month_str in months:
-                # Prefer explicit year in the note; fall back to the year in
-                # raw_date (the post date), which is always >= the decision date.
-                if mdn.group(3):
-                    year = mdn.group(3)
-                else:
-                    yr_match = re.search(r"(20\d{2}|19\d{2})", raw_date)
-                    year = yr_match.group(1) if yr_match else "0000"
-                return f"{year}-{months[month_str]:02d}-{int(mdn.group(2)):02d}"
-
-    # Fallback: parse raw_date as-is
-    return _extract_date(raw_date)
-
-
 def _extract_student_type(text: str) -> str | None:
     """Detect domestic/international student status."""
     lower = text.lower()
@@ -452,7 +388,7 @@ def clean_data(raw_records: list[dict]) -> list[dict]:
     Clean a list of raw scraped records using regex and string methods.
 
     Args:
-        raw_records: Raw records produced by scrape_data() in incremental_scraper.py.
+        raw_records: Raw records produced by scrape_data() in scrape.py.
 
     Returns:
         List of cleaned, structured applicant record dicts.

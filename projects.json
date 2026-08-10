@@ -1,0 +1,93 @@
+[
+  {
+    "module": 1,
+    "title": "Module 1: Personal Website",
+    "overview": "Built a personal developer website using Flask and Blueprints, with an About page, a Projects page, and a Contact page, styled with custom CSS and a colorized, highlight-aware navigation bar.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_1",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 2,
+    "title": "Module 2: Web Scraping",
+    "overview": "Wrote a Grad Cafe web scraper using urllib, Selenium, and BeautifulSoup to collect over 30,000 graduate admissions entries, then standardized messy program and university names using a self-hosted local language model (TinyLlama) with post-processing safeguards, producing applicant_data.json and llm_extend_applicant_data.json.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_2",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 3,
+    "title": "Module 3: [TODO - CONFIRM TITLE, likely Database Queries]",
+    "overview": "TODO (author to complete): pull a 1-2 sentence overview from the Module 3 assignment handout.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_3",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 4,
+    "title": "Module 4: [TODO - CONFIRM TITLE]",
+    "overview": "TODO (author to complete): pull a 1-2 sentence overview from the Module 4 assignment handout.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_4",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 5,
+    "title": "Module 5: [TODO - CONFIRM TITLE, likely Flask + PostgreSQL Analysis Website]",
+    "overview": "TODO (author to complete): pull a 1-2 sentence overview from the Module 5 assignment handout. Note: this is the pre-containerization version of the Grad Cafe analysis website later extended in Module 6 and again in Module 13.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_5",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 6,
+    "title": "Module 6: Containerized Flask + PostgreSQL Analysis Website",
+    "overview": "Extended the Grad Cafe analysis website into a multi-service, containerized application using Docker Compose, with a Flask web service, a PostgreSQL database, and a RabbitMQ-backed worker service for scraping/ETL tasks, including an Analysis page that queries live data and dynamically triggers data pulls and re-analysis.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_6",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 7,
+    "title": "Module 7: [TODO - CONFIRM TITLE]",
+    "overview": "TODO (author to complete): pull a 1-2 sentence overview from the Module 7 assignment handout.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_7",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 8,
+    "title": "Module 8: AWS SageMaker Data Pipeline",
+    "overview": "Built a cloud-based data cleaning and statistical analysis pipeline on AWS SageMaker, fixing real data-quality bugs in the Grad Cafe dataset (degree-label mismatches, GRE sentinel-value contamination, incorrect status-date parsing) and producing a full analytics report with hypothesis tests, correlations, and contingency analysis.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_8",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 9,
+    "title": "Module 9: KMeans Clustering of Graduate Programs",
+    "overview": "Clustered graduate program names using TF-IDF vectorization and PCA dimensionality reduction, tuned cluster count with an elbow analysis, and built animated Plotly visualizations of the resulting clusters and their GRE score distributions.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_9",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 10,
+    "title": "Module 10: Interactive Diamonds Pricing Dashboard",
+    "overview": "Built a Plotly Dash dashboard analyzing whether diamond price can be predicted from its physical features, including static Seaborn visualizations and an animated Plotly scatter plot, with a dynamically computed conclusion based on live correlation analysis rather than a hardcoded result.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_10",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 11,
+    "title": "Module 11: MLOps Tracking for the KMeans Pipeline",
+    "overview": "Added MLflow and Weights & Biases experiment tracking to the Module 9 clustering pipeline, logging hyperparameters, the model's inertia metric, and the trained model artifact itself, with a reproducible, versioned model registry entry.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_11",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 12,
+    "title": "Module 12: Two-Layer Neural Network From Scratch",
+    "overview": "Implemented a two-layer neural network entirely from scratch using NumPy (forward propagation, backpropagation, and gradient descent, with no ML framework) to predict graduate admissions outcomes from GPA, GRE, degree type, and citizenship, reaching 69.5% test accuracy with early stopping.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_12",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  },
+  {
+    "module": 13,
+    "title": "Module 13: Fine-Tuned Language Model Deployment",
+    "overview": "Fine-tuned a pretrained DistilBERT transformer on combined text and structured admissions data (reaching 79% test accuracy, a meaningful improvement over the Module 12 network), then deployed it as a live \"Will You Get In?\" prediction page integrated into the Module 6 Flask website, with the model served via Git LFS.",
+    "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_13",
+    "learned": "TODO (author to complete): what did you learn from this module?"
+  }
+]

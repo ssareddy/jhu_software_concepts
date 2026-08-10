@@ -284,15 +284,6 @@ def _split_program_field(program_text: str) -> tuple[str, str]:
     return "", text
 
 
-
-    """Accept either a list of rows or {'rows': [...]}."""
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
-        return payload["rows"]
-    return []
-
-
 @app.get("/")
 def health() -> Any:
     """Simple liveness check."""

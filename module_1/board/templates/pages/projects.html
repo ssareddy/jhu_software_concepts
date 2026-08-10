@@ -7,17 +7,25 @@ Projects
 {% block content %}
 
 <h1>Projects</h1>
-
-<h2>Module 1: Personal Webpage</h2>
-
-<p>
-    Module 1 project delves into the topic of web application development. For the project I made a personal webpage
-    that contains 3 pages. The first page is an About page that contains a biography of my experience, my current
-    position with my name and a profile picture of me. The second page will be containing all projects I have worked on
-    throughout the course and their links to the repository will be available here. Finally, the third page, will
-    contain my contact information which is my school email and link to my LinkedIn profile.
+<p class="projects-intro">
+    A semester-long portfolio of work from Modern Software Concepts in Python,
+    spanning web scraping, databases, Flask development, cloud computing,
+    MLOps, neural networks, and language model deployment.
 </p>
 
-<a href="https://github.com/ssareddy/jhu_software_concepts/tree/main/module_1"> GitHub Link </a>
+{% if not projects %}
+<p class="projects-empty">No project data available.</p>
+{% endif %}
+
+{% for project in projects %}
+<div class="project-block">
+    <h2>{{ project.title }}</h2>
+    <p class="project-overview">{{ project.overview }}</p>
+    <p class="project-learned"><strong>What I learned:</strong> {{ project.learned }}</p>
+    <a class="project-link" href="{{ project.github_link }}" target="_blank" rel="noopener noreferrer">
+        View on GitHub &rarr;
+    </a>
+</div>
+{% endfor %}
 
 {% endblock content %}

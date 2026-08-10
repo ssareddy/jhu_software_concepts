@@ -145,7 +145,7 @@ automatically by Selenium Manager — no manual download required.
 ### Step 1 — Scrape
 
 ```bash
-python incremental_scraper.py
+python scrape.py
 ```
 
 Scrapes up to 1,500 pages (~30,000 records) from GradCafe and writes raw
@@ -155,7 +155,7 @@ resume automatically from where it stopped.
 To start from a specific page:
 
 ```bash
-python incremental_scraper.py 101
+python scrape.py 101
 ```
 
 ### Step 2 — Clean
