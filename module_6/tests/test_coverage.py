@@ -1192,6 +1192,17 @@ def test_worker_db_config_shim_loads_under_qualified_name():
 
 
 @pytest.mark.buttons
+def test_db_loader_db_config_shim_loads_under_qualified_name():
+    """Same as above, for src/db/db_config.py (used by load_data.py) —
+    see test_web_db_config_shim_loads_under_qualified_name's docstring
+    for why this is necessary rather than redundant."""
+    import importlib
+    mod = importlib.import_module("db.db_config")
+    assert hasattr(mod, "get_db_config")
+    assert hasattr(mod, "get_connection")
+
+
+@pytest.mark.buttons
 def test_gradcafe_common_db_config_fallback_to_individual_vars():
     """get_db_config() falls back to individual DB_* env vars when
     DATABASE_URL is unset. Tested directly against gradcafe_common (not

@@ -261,7 +261,7 @@ def main():  # pragma: no cover
             if conn and not conn.is_closed:
                 try:
                     conn.close()
-                except Exception:
+                except (pika.exceptions.AMQPError, OSError):
                     pass
 
 

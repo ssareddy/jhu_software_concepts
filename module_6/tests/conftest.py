@@ -9,12 +9,19 @@ import psycopg2
 from psycopg2 import extras
 
 # Make src/web and src/web/app importable
+SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 SRC_WEB = os.path.join(os.path.dirname(__file__), "..", "src", "web")
 SRC_WEB_APP = os.path.join(os.path.dirname(__file__), "..", "src", "web", "app")
 SRC_DB = os.path.join(os.path.dirname(__file__), "..", "src", "db")
 sys.path.insert(0, os.path.abspath(SRC_WEB_APP))
 sys.path.insert(0, os.path.abspath(SRC_WEB))
 sys.path.insert(0, os.path.abspath(SRC_DB))
+# SRC itself (parent of db/) is needed so the qualified `db.db_config`
+# import resolves — used by a test that forces that shim to load under
+# its unambiguous qualified name (see test_db_loader_db_config_shim_
+# loads_under_qualified_name and its siblings for app.db_config /
+# etl.db_config for why that's necessary).
+sys.path.insert(0, os.path.abspath(SRC))
 
 # ---------------------------------------------------------------------------
 # Database helpers
