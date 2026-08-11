@@ -10,19 +10,24 @@ Workflow:
   3. BeautifulSoup / regex / string methods parse the rendered HTML.
   4. Raw records are passed to clean.py for structuring.
 """
+
+import json
 import os
 import re
-import time
-import json
 import signal
+import tempfile
 import threading
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from bs4 import BeautifulSoup
-from selenium.webdriver.chrome.webdriver import WebDriver as ChromeDriver
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.webdriver import WebDriver as ChromeWebDriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -66,7 +71,7 @@ def _build_search_url(page: int, per_page: int = 20) -> str:
     return urllib.parse.urljoin(BASE_URL, SEARCH_PATH) + "?" + query
 
 
-def check_robots_txt() -> bool:  # pragma: no cover
+def check_robots_txt() -> bool:
     """
     Fetch and inspect robots.txt. Returns True if /survey/ is allowed
     for a standard browser User-Agent, False otherwise.
@@ -88,7 +93,7 @@ def check_robots_txt() -> bool:  # pragma: no cover
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             content = resp.read().decode("utf-8", errors="replace")
-    except RuntimeError as exc:
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
         print(f"[robots.txt] Could not fetch robots.txt: {exc}")
         return False
 
@@ -130,11 +135,18 @@ def check_robots_txt() -> bool:  # pragma: no cover
 # Selenium browser helpers
 # ---------------------------------------------------------------------------
 
-def _build_driver() -> ChromeDriver:  # pragma: no cover
+def _build_driver() -> ChromeWebDriver:
     """
     Instantiate a headless Chrome WebDriver.
-    Uses Selenium Manager (bundled with Selenium 4.6+) to handle
-    ChromeDriver automatically — no manual driver download required.
+
+    If CHROME_BIN / CHROMEDRIVER_PATH are set (as they are in the worker
+    Docker image, which installs Chromium directly rather than relying
+    on Selenium Manager's runtime auto-download), those paths are used
+    explicitly. Selenium Manager's auto-download can fail under a
+    non-root container user with a "Permission denied" error trying to
+    write its cache — pinning explicit paths avoids that entirely. When
+    unset (e.g. local development with a system Chrome install),
+    Selenium Manager's normal auto-detection is used instead.
     """
     options = Options()
     options.add_argument("--headless=new")
@@ -146,12 +158,27 @@ def _build_driver() -> ChromeDriver:  # pragma: no cover
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
-    return ChromeDriver(options=options)
+    # Chrome writes its profile under this dir on startup. The container
+    # runs as a non-root user with no writable $HOME, which makes Chrome's
+    # default location fail with "Failed to create headless user data
+    # directory container." tempfile.gettempdir() (/tmp) is writable by
+    # any user, and mkdtemp gives each driver instance its own directory
+    # so rebuilt sessions (see _pause_and_rebuild_driver) never collide.
+    options.add_argument(f"--user-data-dir={tempfile.mkdtemp(prefix='chrome-profile-')}")
+
+    chrome_bin = os.environ.get("CHROME_BIN")
+    if chrome_bin:
+        options.binary_location = chrome_bin
+
+    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
+    if chromedriver_path:
+        service = ChromeService(executable_path=chromedriver_path)
+        return ChromeWebDriver(options=options, service=service)
+
+    return ChromeWebDriver(options=options)
 
 
-def _get_page_source(  # pragma: no cover
-    driver: ChromeDriver, url: str, retries: int = 3
-) -> str | None:
+def _get_page_source(driver: ChromeWebDriver, url: str, retries: int = 3) -> str | None:
     """
     Navigate to url with Selenium, wait for the page body to load,
     and return the fully rendered page source. Returns None on failure.
@@ -175,7 +202,7 @@ def _get_page_source(  # pragma: no cover
             source = driver.page_source
             print(f"[Selenium] Loaded: {driver.title!r} ({len(source):,} chars)")
             return source
-        except RuntimeError as exc:
+        except (TimeoutException, WebDriverException) as exc:
             print(f"[Selenium] Attempt {attempt}/{retries + 1} failed for {url}: {exc}")
             if attempt <= retries:
                 wait = 10 * attempt  # 10s then 20s before retrying
@@ -184,7 +211,7 @@ def _get_page_source(  # pragma: no cover
     return None
 
 
-def _safe_quit(driver: ChromeDriver, timeout: int = 8) -> None:  # pragma: no cover
+def _safe_quit(driver: ChromeWebDriver, timeout: int = 8) -> None:
     """
     Quit the Selenium driver without risking a hang.
 
@@ -192,14 +219,19 @@ def _safe_quit(driver: ChromeDriver, timeout: int = 8) -> None:  # pragma: no co
     state (rate-limited, network stalled, crashed). This helper runs quit()
     in a daemon thread so it cannot freeze the main process:
       - If quit() finishes within `timeout` seconds — clean exit.
-      - If it times out, the thread is abandoned, and we fall back to
+      - If it times out, the thread is abandoned and we fall back to
         force-killing the chromedriver subprocess via its PID.
+
+    Cross-platform note: signal.SIGKILL doesn't exist on Windows. We fall
+    back to SIGTERM there — os.kill() on Windows maps any non-CTRL_* signal
+    number to TerminateProcess(), so this still forcibly kills the process.
     """
+    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
 
     def _quit():
         try:
             driver.quit()
-        except RuntimeError:
+        except (WebDriverException, OSError):
             pass
 
     t = threading.Thread(target=_quit, daemon=True)
@@ -210,16 +242,27 @@ def _safe_quit(driver: ChromeDriver, timeout: int = 8) -> None:  # pragma: no co
         print(f"\n[scrape] driver.quit() hung after {timeout}s — force-killing Chrome.")
         try:
             pid = driver.service.process.pid
-            # SIGKILL forcefully terminates the process on Unix/Linux/macOS.
-            # SIGILL is used on Windows where SIGKILL is not available.
-            kill_signal = getattr(signal, "SIGKILL", signal.SIGILL)
             os.kill(pid, kill_signal)
-        except RuntimeError:
+        except (OSError, AttributeError):
             pass
 
 
-def _extract_url(summary_row) -> str:
-    """Find and return the GradCafe result URL from the row."""
+def _extract_decision_text(decision_cell) -> str:
+    """Extract just the decision text (e.g. "Accepted on Jun 02") from a
+    summary row's decision cell, stripping UI noise like comment counts."""
+    if decision_cell is None:
+        return ""
+    full_text = decision_cell.get_text(separator=" ", strip=True)
+    match = re.search(
+        r"(accepted|rejected|waitlisted|wait\s*listed|interview\w*)"
+        r"(\s+on\s+[A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)?",
+        full_text, re.I,
+    )
+    return match.group(0).strip() if match else full_text
+
+
+def _extract_result_url(summary_row) -> str:
+    """Find the /result/ link in a summary row, if any."""
     for a_tag in summary_row.find_all("a", href=True):
         href = a_tag["href"]
         if "/result/" in href:
@@ -227,46 +270,94 @@ def _extract_url(summary_row) -> str:
     return ""
 
 
+def _extract_row_text(row, separator: str = " ") -> str:
+    """Get the text of a detail row's single <td>, or '' if absent."""
+    if row is None:
+        return ""
+    cell = row.find("td")
+    return cell.get_text(separator=separator, strip=True) if cell else ""
+
+
 def _parse_entry(summary_row, tags_row, notes_row) -> dict:
-    """Extract a single applicant record from consecutive <tr> tags."""
+    """
+    Extract a single applicant record from consecutive <tr> tags.
+
+    GradCafe summary rows have 4 columns:
+      col 0: School name
+      col 1: Program · DegreeType  (e.g. "Physics · PhD")
+      col 2: Date added            (e.g. "Jun 06, 2026")
+      col 3: Decision label + URL  (e.g. "Rejected on Jun 02")
+
+    tags_row and notes_row follow immediately after the summary row.
+    """
     cells = summary_row.find_all("td")
     if len(cells) < 3:
         return {}
 
-    # Extract decision, tags, and notes directly without extra assignments
-    raw_decision = ""
-    if len(cells) > 3:
-        full_text = cells[3].get_text(separator=" ", strip=True)
-        m = re.search(
-            r"(accepted|rejected|waitlisted|wait\s*listed|interview\w*)"
-            r"(\s+on\s+[A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)?",
-            full_text, re.I,
-        )
-        raw_decision = m.group(0).strip() if m else full_text
+    raw_institution_program = cells[0].get_text(separator=" ", strip=True)
+    # Col 1: "Program · DegreeType" — keep combined for downstream splitting.
+    raw_degree_status = cells[1].get_text(separator=" ", strip=True) if len(cells) > 1 else ""
+    # Col 2: date added to GradCafe
+    raw_date = cells[2].get_text(separator=" ", strip=True) if len(cells) > 2 else ""
+    # Col 3: decision label — strip UI noise like "Total comments", bell icons,
+    # comment counts, and any non-decision text that GradCafe injects.
+    raw_decision = _extract_decision_text(cells[3] if len(cells) > 3 else None)
 
-    if tags_row and tags_row.find("td"):
-        raw_tags = tags_row.find("td").get_text(separator="   ", strip=True)
-    else:
-        raw_tags = ""
+    url = _extract_result_url(summary_row)
 
-    if notes_row and notes_row.find("td"):
-        raw_notes = notes_row.find("td").get_text(separator=" ", strip=True)
-    else:
-        raw_notes = ""
+    # Row 1: structured tokens — "Rejected on Jun 02§Fall 2026§American"
+    raw_tags = _extract_row_text(tags_row, separator="   ")
+    # Row 2: free-text applicant comment — entirely separate row.
+    raw_notes = _extract_row_text(notes_row)
+
+    # Merge decision label + tags into a single pipe-joined string that
+    # clean.py mines for: decision date, semester, student type, GPA, GRE.
+    raw_degree_status_full = " | ".join(
+        filter(None, [raw_degree_status, raw_decision, raw_tags])
+    )
 
     return {
-        "raw_institution_program": cells[0].get_text(separator=" ", strip=True),
-        "raw_degree_status": " | ".join(
-            filter(None, [
-                cells[1].get_text(separator=" ", strip=True) if len(cells) > 1 else "",
-                raw_decision,
-                raw_tags
-            ])
-        ),
-        "raw_date": cells[2].get_text(separator=" ", strip=True) if len(cells) > 2 else "",
-        "raw_notes": raw_notes,
-        "url": _extract_url(summary_row),
+        "raw_institution_program": raw_institution_program,
+        "raw_degree_status":       raw_degree_status_full,
+        "raw_date":                raw_date,
+        "raw_notes":               raw_notes,
+        "url":                     url,
     }
+
+
+def _find_result_table(soup: BeautifulSoup):
+    """Find the results table on a Grad Cafe page (contains /result/ links),
+    falling back to the first table found if none match."""
+    for table in soup.find_all("table"):
+        if table.find("a", href=re.compile(r"/result/", re.I)):
+            return table
+    return soup.find("table")
+
+
+def _is_detail_row(row) -> bool:
+    """A tags/notes detail row has exactly 1 <td> and no /result/ link."""
+    return (
+        row is not None
+        and len(row.find_all("td")) == 1
+        and not row.find("a", href=re.compile(r"/result/", re.I))
+    )
+
+
+def _peek_detail_rows(data_rows: list, i: int) -> tuple:
+    """Look at the next two rows after a summary row and return
+    (tags_row, notes_row, rows_consumed), treating a row as a detail row
+    only if _is_detail_row() confirms it."""
+    next_row = data_rows[i + 1] if (i + 1) < len(data_rows) else None
+    after_next_row = data_rows[i + 2] if (i + 2) < len(data_rows) else None
+    tags_row = next_row if _is_detail_row(next_row) else None
+    notes_row = after_next_row if _is_detail_row(after_next_row) else None
+
+    consumed = 1
+    if tags_row is not None:
+        consumed += 1
+    if notes_row is not None:
+        consumed += 1
+    return tags_row, notes_row, consumed
 
 
 def _parse_page(html: str) -> list[dict]:
@@ -287,14 +378,7 @@ def _parse_page(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     records: list[dict] = []
 
-    # Find the table containing result links
-    result_table = None
-    for table in soup.find_all("table"):
-        if table.find("a", href=re.compile(r"/result/", re.I)):
-            result_table = table
-            break
-    if result_table is None:
-        result_table = soup.find("table")
+    result_table = _find_result_table(soup)
     if result_table is None:
         return records
 
@@ -304,9 +388,8 @@ def _parse_page(html: str) -> list[dict]:
     i = 0
     while i < len(data_rows):
         row = data_rows[i]
-        n_cells = len(row.find_all("td"))
         is_summary = (
-            n_cells >= 3
+            len(row.find_all("td")) >= 3
             and row.find("a", href=re.compile(r"/result/", re.I))
         )
 
@@ -314,32 +397,7 @@ def _parse_page(html: str) -> list[dict]:
             i += 1
             continue
 
-        # Peek at the next two rows to find tags and notes rows.
-        # A tags/notes row has exactly 1 <td> and no /result/ link.
-        def _is_detail(r):
-            return (
-                r is not None
-                and len(r.find_all("td")) == 1
-                and not r.find("a", href=re.compile(r"/result/", re.I))
-            )
-
-        tags_row = (
-            data_rows[i + 1]
-            if (i + 1) < len(data_rows) and _is_detail(data_rows[i + 1])
-            else None
-        )
-        notes_row = (
-            data_rows[i + 2]
-            if (i + 2) < len(data_rows) and _is_detail(data_rows[i + 2])
-            else None
-        )
-
-        # Only consume rows that are actually detail rows
-        consumed = 1
-        if tags_row is not None:
-            consumed += 1
-        if notes_row is not None:
-            consumed += 1
+        tags_row, notes_row, consumed = _peek_detail_rows(data_rows, i)
 
         entry = _parse_entry(row, tags_row, notes_row)
         if entry:
@@ -378,7 +436,7 @@ def _get_resume_page(output_file: Path) -> int:
                   f"Resuming from page {resume}.")
             return resume
         return 1
-    except (json.JSONDecodeError, OSError) as exc:
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
         print(f"[scrape] Could not read {output_file}: {exc}. Starting from page 1.")
         return 1
 
@@ -406,8 +464,8 @@ def _load_existing_records(output_file: Path) -> list[dict]:
             return data
         if isinstance(data, dict) and "records" in data:
             return data["records"]
-    except (json.JSONDecodeError, OSError):
-        pass
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
+        print(f"[scrape] Could not read existing records from {output_file}: {exc}")
     return []
 
 
@@ -415,8 +473,43 @@ def _load_existing_records(output_file: Path) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def scrape_data(  # pragma: no cover
-    max_pages: int = MAX_PAGES, output_file: Path = RAW_FILE, start_page: int = 1
+def _pause_and_rebuild_driver(
+    driver: ChromeWebDriver,
+    page_num: int,
+    all_records: list[dict],
+    output_file: Path | None,
+) -> ChromeWebDriver:
+    """Handle a failed/rate-limited page load: checkpoint progress, tear
+    down the poisoned Selenium session, wait out the rate-limit pause with
+    a visible countdown, then return a freshly built driver."""
+    if output_file is not None:
+        _write_resume_marker(all_records, page_num, output_file)
+    print(f"[scrape] {len(all_records):,} records saved. "
+          f"Pausing {RATE_LIMIT_PAUSE // 60} minutes before retrying "
+          f"page {page_num} with a fresh browser session...")
+
+    # Tear down the poisoned session before sleeping.
+    # Use _safe_quit so a hanging Chrome can't block the countdown.
+    _safe_quit(driver)
+
+    # Count down so the console shows the scrape is still alive.
+    remaining = RATE_LIMIT_PAUSE
+    while remaining > 0:
+        print(f"[scrape] Resuming in {remaining // 60}m {remaining % 60:02d}s…",
+              end="\r", flush=True)
+        time.sleep(min(30, remaining))
+        remaining -= min(30, remaining)
+    print()  # newline after the countdown
+
+    new_driver = _build_driver()
+    print(f"[scrape] Fresh browser session ready. Retrying page {page_num}.")
+    return new_driver
+
+
+def scrape_data(
+    max_pages: int = MAX_PAGES,
+    output_file: Path = RAW_FILE,
+    start_page: int = 1,
 ) -> list:
     """
     Main scraping entry point.
@@ -462,30 +555,7 @@ def scrape_data(  # pragma: no cover
                     else "page loaded but returned no records — site may be blocking"
                 )
                 print(f"[scrape] Page {page_num}: {reason}.")
-
-                # Save progress so data is safe during the pause.
-                if output_file is not None:
-                    _write_resume_marker(all_records, page_num, output_file)
-                print(f"[scrape] {len(all_records):,} records saved. "
-                      f"Pausing {RATE_LIMIT_PAUSE // 60} minutes before retrying "
-                      f"page {page_num} with a fresh browser session...")
-
-                # Tear down the poisoned session before sleeping.
-                # Use _safe_quit so a hanging Chrome can't block the countdown.
-                _safe_quit(driver)
-
-                # Count down so the console shows the scrape is still alive.
-                remaining = RATE_LIMIT_PAUSE
-                while remaining > 0:
-                    print(f"[scrape] Resuming in {remaining // 60}m {remaining % 60:02d}s…",
-                          end="\r", flush=True)
-                    time.sleep(min(30, remaining))
-                    remaining -= min(30, remaining)
-                print()  # newline after the countdown
-
-                # Rebuild the driver and retry the same page — do NOT advance.
-                driver = _build_driver()
-                print(f"[scrape] Fresh browser session ready. Retrying page {page_num}.")
+                driver = _pause_and_rebuild_driver(driver, page_num, all_records, output_file)
                 continue  # retry the same page_num
 
             # ---- Successful page ----
