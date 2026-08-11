@@ -1,68 +1,24 @@
 """
-db_config.py
-------------
-Single source of truth for database connection configuration.
+db_config.py (worker service)
+-------------------------------
+Module alias, not a plain re-export. Real implementation lives in
+gradcafe_common (shared with web/) — see
+src/common/gradcafe_common/db_config.py and src/common/setup.py for why.
 
-Resolution order (first match wins):
-  1. DATABASE_URL environment variable  (e.g. CI / Heroku / Docker)
-  2. Individual DB_* environment variables
-  3. Safe localhost defaults (no password — relies on peer/trust auth or .pgpass)
-
-Never hard-codes credentials. No interactive prompts.
-
-Usage:
-    from db_config import get_db_config, get_connection
-
-    conn = get_connection()          # uses env vars automatically
-    config = get_db_config()         # returns a dict for psycopg2.connect(**config)
+The explicit import below is functionally redundant (the sys.modules
+line replaces this module's identity entirely) — it exists purely so
+static analyzers like pylint can see these names are genuinely defined,
+since they can't follow the runtime sys.modules swap. The swap is what
+actually matters at runtime: it makes `import db_config` resolve to the
+*exact same module object* as gradcafe_common.db_config, so the test
+suite's direct patching (e.g. `patch("db_config.psycopg2.connect", ...)`)
+reaches the real implementation.
 """
+import sys
 
-import os
-import urllib.parse
-import psycopg2
+from gradcafe_common.db_config import get_db_config, get_connection
+import gradcafe_common.db_config as _real
 
+__all__ = ["get_db_config", "get_connection"]
 
-def get_db_config() -> dict:
-    """
-    Build a psycopg2-compatible connection dict from the environment.
-
-    Checks DATABASE_URL first (standard for cloud/CI environments),
-    then falls back to individual DB_HOST / DB_PORT / DB_NAME /
-    DB_USER / DB_PASSWORD variables, then to safe localhost defaults.
-
-    Returns
-    -------
-    dict
-        Keys: host, port, dbname, user, password
-    """
-    database_url = os.environ.get("DATABASE_URL", "").strip()
-    if database_url:
-        parsed = urllib.parse.urlparse(database_url)
-        return {
-            "host":     parsed.hostname or "localhost",
-            "port":     parsed.port or 5432,
-            "dbname":   parsed.path.lstrip("/") or "gradcafe",
-            "user":     parsed.username or "postgres",
-            "password": parsed.password or "",
-        }
-
-    return {
-        "host":     os.environ.get("DB_HOST", "localhost"),
-        "port":     int(os.environ.get("DB_PORT", "5432")),
-        "dbname":   os.environ.get("DB_NAME", "gradcafe"),
-        "user":     os.environ.get("DB_USER", "postgres"),
-        "password": os.environ.get("DB_PASSWORD", ""),
-    }
-
-
-def get_connection() -> "psycopg2.connection":
-    """
-    Open and return a psycopg2 connection using ``get_db_config()``.
-
-    Raises
-    ------
-    psycopg2.OperationalError
-        If the database cannot be reached with the resolved config.
-    """
-    config = get_db_config()
-    return psycopg2.connect(**config)
+sys.modules[__name__] = _real

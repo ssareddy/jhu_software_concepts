@@ -27,7 +27,9 @@ services:
       retries: 10
 
   web:
-    build: ./src/web
+    build:
+      context: .
+      dockerfile: src/web/Dockerfile
     environment:
       FLASK_ENV: ${FLASK_ENV}
       DATABASE_URL: ${DATABASE_URL}
@@ -41,7 +43,9 @@ services:
         condition: service_healthy
 
   worker:
-    build: ./src/worker
+    build:
+      context: .
+      dockerfile: src/worker/Dockerfile
     environment:
       DATABASE_URL: ${DATABASE_URL}
       RABBITMQ_URL: ${RABBITMQ_URL}

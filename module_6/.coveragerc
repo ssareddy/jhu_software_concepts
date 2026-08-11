@@ -1,16 +1,12 @@
 [run]
 source =
     module_6/src/web/app
+    module_6/src/web/publisher.py
     module_6/src/worker
     module_6/src/db
+    module_6/src/common/gradcafe_common
 
 data_file = module_6/.coverage
 
 [report]
 fail_under = 100
-omit =
-    module_6/src/worker/etl/clean.py
-    module_6/src/worker/etl/db_config.py
-    module_6/src/worker/etl/query_data.py
-    module_6/src/worker/etl/incremental_scraper.py
-    module_6/src/web/app/db_config.py

@@ -9,9 +9,7 @@ import os
 
 import pika
 
-EXCHANGE = "tasks"
-QUEUE = "tasks_q"
-ROUTING_KEY = "tasks"
+from gradcafe_common.amqp import EXCHANGE, ROUTING_KEY, declare_topology
 
 
 def _open_channel():
@@ -20,9 +18,7 @@ def _open_channel():
     params = pika.URLParameters(url)
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
-    ch.exchange_declare(exchange=EXCHANGE, exchange_type="direct", durable=True)
-    ch.queue_declare(queue=QUEUE, durable=True)
-    ch.queue_bind(exchange=EXCHANGE, queue=QUEUE, routing_key=ROUTING_KEY)
+    declare_topology(ch)
     return conn, ch
 
 

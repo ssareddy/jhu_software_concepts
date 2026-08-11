@@ -3,6 +3,7 @@ consumer.py
 -----------
 RabbitMQ worker. Routes tasks to handlers, acks only after DB commit.
 """
+import datetime
 import json
 import logging
 import os
@@ -12,6 +13,8 @@ import urllib.parse as up
 import pika
 import psycopg2
 
+from gradcafe_common.amqp import QUEUE, declare_topology
+
 from etl.incremental_scraper import scrape_data
 from etl.clean import clean_data
 from etl.query_data import get_all_results
@@ -19,9 +22,35 @@ from etl.query_data import get_all_results
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-EXCHANGE = "tasks"
-QUEUE = "tasks_q"
-ROUTING_KEY = "tasks"
+
+
+# The scraper's date_added field is GradCafe's raw display text, e.g.
+# "Jun 06, 2026" — NOT sortable as a plain string (month names don't sort
+# chronologically: "Feb 01, 2026" < "Jan 01, 2026" lexicographically).
+# Watermark comparisons must go through this parser, never raw string `>`.
+_DATE_ADDED_FORMAT = "%b %d, %Y"
+
+
+def _parse_date_added(date_str: str | None) -> datetime.date | None:
+    """Parse a scraped date_added string ("Jun 06, 2026") into a date.
+
+    Also accepts already-ISO ("2026-06-06") values, so previously-stored
+    watermarks (written before this fix, in the old raw-string format via
+    isoformat() on a date parsed the old way) and freshly-scraped records
+    both parse correctly.
+    """
+    if not date_str:
+        return None
+    date_str = date_str.strip()
+    try:
+        return datetime.datetime.strptime(date_str, _DATE_ADDED_FORMAT).date()
+    except ValueError:
+        pass
+    try:
+        return datetime.date.fromisoformat(date_str)
+    except ValueError:
+        log.warning("Could not parse date_added value: %r", date_str)
+        return None
 
 
 def _parse_float(val):
@@ -71,7 +100,7 @@ def _set_watermark(cur, source: str, last_seen: str) -> None:
 def handle_scrape_new_data(conn, payload: dict) -> None:
     """Scrape, clean, and insert new records idempotently with watermark."""
     source = "gradcafe"
-    since = payload.get("since")
+    since_raw = payload.get("since")
     insert_sql = """
         INSERT INTO applicants (
             program, comments, date_added, url, status, term,
@@ -85,25 +114,29 @@ def handle_scrape_new_data(conn, payload: dict) -> None:
         ) ON CONFLICT (url) DO NOTHING;
     """
     with conn.cursor() as cur:
-        if since is None:
-            since = _get_watermark(cur, source)
-        log.info("Scraping since: %s", since)
+        if since_raw is None:
+            since_raw = _get_watermark(cur, source)
+        since_date = _parse_date_added(since_raw)
+        log.info("Scraping since: %s (parsed: %s)", since_raw, since_date)
 
-        # Pass since to scraper to filter only newer records
         raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)
+        cleaned = clean_data(raw_records)
 
-        # Filter records newer than watermark if since is set
-        if since:
-            raw_records = [
-                r for r in raw_records
-                if r.get("date_added") and r["date_added"] > since
+        # Filter to records strictly newer than the watermark. Comparison
+        # happens on parsed dates, not raw strings — see _parse_date_added.
+        if since_date is not None:
+            cleaned = [
+                rec for rec in cleaned
+                if (parsed := _parse_date_added(rec.get("date_added"))) is not None
+                and parsed > since_date
             ]
 
-        cleaned = clean_data(raw_records)
         if not cleaned:
             conn.commit()
+            log.info("No new records past watermark.")
             return
-        last_seen = None
+
+        max_seen_date = since_date
         for rec in cleaned:
             cur.execute(insert_sql, {
                 "program": rec.get("program"),
@@ -121,10 +154,14 @@ def handle_scrape_new_data(conn, payload: dict) -> None:
                 "llm_generated_program": rec.get("llm-generated-program"),
                 "llm_generated_university": rec.get("llm-generated-university"),
             })
-            if rec.get("date_added"):
-                last_seen = rec["date_added"]
-        if last_seen:
-            _set_watermark(cur, source, last_seen)
+            rec_date = _parse_date_added(rec.get("date_added"))
+            if rec_date is not None and (max_seen_date is None or rec_date > max_seen_date):
+                max_seen_date = rec_date
+
+        if max_seen_date is not None:
+            # Store as ISO so every future read is unambiguous and
+            # sortable, regardless of the scraper's raw display format.
+            _set_watermark(cur, source, max_seen_date.isoformat())
     conn.commit()
     log.info("Inserted %d records.", len(cleaned))
 
@@ -206,9 +243,7 @@ def main():  # pragma: no cover
         try:
             conn = pika.BlockingConnection(params)
             ch = conn.channel()
-            ch.exchange_declare(exchange=EXCHANGE, exchange_type="direct", durable=True)
-            ch.queue_declare(queue=QUEUE, durable=True)
-            ch.queue_bind(exchange=EXCHANGE, queue=QUEUE, routing_key=ROUTING_KEY)
+            declare_topology(ch)
             ch.basic_qos(prefetch_count=1)
             ch.basic_consume(queue=QUEUE, on_message_callback=_on_message)
             log.info("Worker ready on queue '%s'...", QUEUE)

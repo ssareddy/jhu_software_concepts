@@ -506,6 +506,61 @@ def test_api_update_analysis_returns_503_on_failure():
 
 
 @pytest.mark.web
+def test_api_pull_data_returns_503_on_real_amqp_connection_error():
+    """POST /api/pull_data returns 503 (not an unhandled 500) when RabbitMQ
+    is actually unreachable — i.e. publish_task raises the real pika
+    exception type, not a generic RuntimeError/OSError stand-in. This is
+    the failure mode a dead/unreachable broker actually produces."""
+    import pika.exceptions
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch(
+        "app.app.publish_task",
+        side_effect=pika.exceptions.AMQPConnectionError("broker unreachable"),
+    ):
+        client = flask_app.test_client()
+        resp = client.post("/api/pull_data")
+
+    assert resp.status_code == 503
+    assert resp.get_json()["error"] == "publish_failed"
+
+
+@pytest.mark.web
+def test_api_update_analysis_returns_503_on_real_amqp_connection_error():
+    """Same as above, for /api/update_analysis."""
+    import pika.exceptions
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch(
+        "app.app.publish_task",
+        side_effect=pika.exceptions.AMQPConnectionError("broker unreachable"),
+    ):
+        client = flask_app.test_client()
+        resp = client.post("/api/update_analysis")
+
+    assert resp.status_code == 503
+    assert resp.get_json()["error"] == "publish_failed"
+
+
+@pytest.mark.web
+def test_api_pull_data_returns_503_on_missing_rabbitmq_url():
+    """POST /api/pull_data returns 503 (not an unhandled 500) when
+    RABBITMQ_URL is unset — publisher.py's os.environ["RABBITMQ_URL"]
+    raises KeyError, which must also be caught."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+
+    with patch("app.app.publish_task", side_effect=KeyError("RABBITMQ_URL")):
+        client = flask_app.test_client()
+        resp = client.post("/api/pull_data")
+
+    assert resp.status_code == 503
+    assert resp.get_json()["error"] == "publish_failed"
+
+
+@pytest.mark.web
 def test_api_scrape_status_returns_worker_managed():
     """GET /api/scrape_status returns worker_managed status."""
     flask_app = app_module.create_app()
@@ -1038,3 +1093,201 @@ def test_consumer_handle_scrape_with_records(monkeypatch):
         handle_scrape_new_data(mock_conn, {})
 
     mock_conn.commit.assert_called_once()
+
+@pytest.mark.buttons
+def test_publisher_open_channel_declares_topology():
+    """_open_channel() reads RABBITMQ_URL, opens a connection, and calls
+    declare_topology on the resulting channel — the real code path, not
+    a mocked-away publish_task like the Flask-route tests use."""
+    import publisher
+
+    mock_conn = MagicMock()
+    mock_ch = MagicMock()
+    mock_conn.channel.return_value = mock_ch
+
+    with patch.dict(os.environ, {"RABBITMQ_URL": "amqp://guest:guest@localhost:5672/"}), \
+         patch("publisher.pika.BlockingConnection", return_value=mock_conn) as mock_bc:
+        conn, ch = publisher._open_channel()
+
+    assert conn is mock_conn
+    assert ch is mock_ch
+    mock_bc.assert_called_once()
+    # declare_topology's three calls actually happened on the real channel
+    mock_ch.exchange_declare.assert_called_once_with(
+        exchange="tasks", exchange_type="direct", durable=True
+    )
+    mock_ch.queue_declare.assert_called_once_with(queue="tasks_q", durable=True)
+    mock_ch.queue_bind.assert_called_once_with(
+        exchange="tasks", queue="tasks_q", routing_key="tasks"
+    )
+
+
+@pytest.mark.buttons
+def test_publisher_publish_task_sends_persistent_message():
+    """publish_task() builds the expected JSON body, publishes with
+    delivery_mode=2 (persistent), and always closes the connection."""
+    import publisher
+
+    mock_conn = MagicMock()
+    mock_ch = MagicMock()
+
+    with patch("publisher._open_channel", return_value=(mock_conn, mock_ch)):
+        publisher.publish_task("scrape_new_data", payload={"foo": "bar"})
+
+    mock_ch.basic_publish.assert_called_once()
+    _, kwargs = mock_ch.basic_publish.call_args
+    assert kwargs["exchange"] == "tasks"
+    assert kwargs["routing_key"] == "tasks"
+    assert kwargs["properties"].delivery_mode == 2
+
+    body = json.loads(kwargs["body"])
+    assert body["kind"] == "scrape_new_data"
+    assert body["payload"] == {"foo": "bar"}
+    assert "ts" in body
+
+    mock_conn.close.assert_called_once()
+
+
+@pytest.mark.buttons
+def test_publisher_publish_task_closes_connection_on_failure():
+    """Even if basic_publish raises, the connection is still closed
+    (finally block) and the exception still propagates (so the Flask
+    route can turn it into a 503)."""
+    import publisher
+
+    mock_conn = MagicMock()
+    mock_ch = MagicMock()
+    mock_ch.basic_publish.side_effect = RuntimeError("channel closed")
+
+    with patch("publisher._open_channel", return_value=(mock_conn, mock_ch)):
+        with pytest.raises(RuntimeError):
+            publisher.publish_task("recompute_analytics")
+
+    mock_conn.close.assert_called_once()
+
+
+@pytest.mark.buttons
+def test_web_db_config_shim_loads_under_qualified_name():
+    """Force src/web/app/db_config.py to actually execute under its fully
+    qualified package name (app.db_config), rather than relying on
+    whichever of the two same-named shims (web's vs worker's) happens to
+    win the bare `import db_config` cache race on a given machine/run —
+    that race is real: both web/app/ and worker/etl/ are on sys.path
+    simultaneously with a file named db_config.py, so a bare `import
+    db_config` anywhere only ever loads and covers one of them."""
+    import importlib
+    mod = importlib.import_module("app.db_config")
+    assert hasattr(mod, "get_db_config")
+    assert hasattr(mod, "get_connection")
+
+
+@pytest.mark.buttons
+def test_worker_db_config_shim_loads_under_qualified_name():
+    """Same as above, for worker/etl/db_config.py — see that test's
+    docstring for why this is necessary rather than redundant."""
+    import importlib
+    mod = importlib.import_module("etl.db_config")
+    assert hasattr(mod, "get_db_config")
+    assert hasattr(mod, "get_connection")
+
+
+@pytest.mark.buttons
+def test_gradcafe_common_db_config_fallback_to_individual_vars():
+    """get_db_config() falls back to individual DB_* env vars when
+    DATABASE_URL is unset. Tested directly against gradcafe_common (not
+    through either service's shim) so it's unambiguous which file this
+    covers."""
+    import gradcafe_common.db_config as real_db_config
+
+    env = {
+        "DB_HOST": "myhost", "DB_PORT": "5433", "DB_NAME": "mydb",
+        "DB_USER": "myuser", "DB_PASSWORD": "mypass",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        # Ensure DATABASE_URL is absent so the fallback branch is taken.
+        os.environ.pop("DATABASE_URL", None)
+        config = real_db_config.get_db_config()
+
+    assert config == {
+        "host": "myhost", "port": 5433, "dbname": "mydb",
+        "user": "myuser", "password": "mypass",
+    }
+
+
+@pytest.mark.buttons
+def test_gradcafe_common_get_connection_calls_psycopg2_connect():
+    """get_connection() calls psycopg2.connect with the resolved config.
+    Tested directly against gradcafe_common (not through either
+    service's shim) so it's unambiguous which file this covers."""
+    import gradcafe_common.db_config as real_db_config
+
+    mock_conn = MagicMock()
+    with patch.object(real_db_config.psycopg2, "connect", return_value=mock_conn) as mock_connect:
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://u:p@localhost/db"}):
+            conn = real_db_config.get_connection()
+
+    assert conn is mock_conn
+    mock_connect.assert_called_once()
+
+
+@pytest.mark.web
+def test_index_route_renders_page():
+    """GET / renders the analysis page (status 200, real HTML body)."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+    client = flask_app.test_client()
+
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert b"<html" in resp.data.lower() or b"<!doctype" in resp.data.lower()
+
+
+@pytest.mark.web
+def test_analysis_route_renders_same_page_as_index():
+    """GET /analysis is an alias for / — same template, status 200."""
+    flask_app = app_module.create_app()
+    flask_app.config["TESTING"] = True
+    client = flask_app.test_client()
+
+    resp_index = client.get("/")
+    resp_analysis = client.get("/analysis")
+
+    assert resp_analysis.status_code == 200
+    assert resp_analysis.data == resp_index.data
+
+
+@pytest.mark.db
+def test_parse_date_added_scraped_format():
+    """_parse_date_added parses the scraper's raw display format."""
+    from consumer import _parse_date_added
+    import datetime
+    assert _parse_date_added("Jun 06, 2026") == datetime.date(2026, 6, 6)
+
+
+@pytest.mark.db
+def test_parse_date_added_iso_fallback():
+    """_parse_date_added also accepts already-ISO dates (e.g. a
+    previously-stored watermark)."""
+    from consumer import _parse_date_added
+    import datetime
+    assert _parse_date_added("2026-06-06") == datetime.date(2026, 6, 6)
+
+
+@pytest.mark.db
+def test_parse_date_added_none_input():
+    """_parse_date_added returns None for empty/None input."""
+    from consumer import _parse_date_added
+    assert _parse_date_added(None) is None
+    assert _parse_date_added("") is None
+
+
+@pytest.mark.db
+def test_parse_date_added_unparseable_returns_none(caplog):
+    """_parse_date_added returns None (and logs a warning) for a string
+    that matches neither the scraper's format nor ISO — the genuinely
+    malformed/garbage-input case."""
+    from consumer import _parse_date_added
+    result = _parse_date_added("not a real date")
+    assert result is None
+    assert "Could not parse date_added value" in caplog.text

@@ -133,7 +133,7 @@ $env:DATABASE_URL="postgresql://gradcafe_user:<password>@localhost:5432/gradcafe
 Run Pylint on all source files from inside `module_5/`:
 
 ```bash
-pylint src/app.py src/clean.py src/db_config.py src/load_data.py src/query_data.py src/incremental_scraper.py
+pylint src/app.py src/clean.py src/db_config.py src/load_data.py src/query_data.py src/scrape.py
 ```
 
 Expected output: `Your code has been rated at 10.00/10`

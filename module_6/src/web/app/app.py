@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 
+import pika
 import psycopg2
 from flask import Flask, current_app, jsonify, render_template
 
@@ -52,7 +53,7 @@ def create_app(query_fn=None):
         try:
             publish_task("scrape_new_data", payload={})
             return jsonify({"status": "queued", "task": "scrape_new_data"}), 202
-        except (OSError, RuntimeError) as exc:
+        except (pika.exceptions.AMQPError, OSError, RuntimeError, KeyError) as exc:
             current_app.logger.exception("Failed to publish scrape_new_data")
             return jsonify({"error": "publish_failed", "message": str(exc)}), 503
 
@@ -62,7 +63,7 @@ def create_app(query_fn=None):
         try:
             publish_task("recompute_analytics", payload={})
             return jsonify({"status": "queued", "task": "recompute_analytics"}), 202
-        except (OSError, RuntimeError) as exc:
+        except (pika.exceptions.AMQPError, OSError, RuntimeError, KeyError) as exc:
             current_app.logger.exception("Failed to publish recompute_analytics")
             return jsonify({"error": "publish_failed", "message": str(exc)}), 503
 
