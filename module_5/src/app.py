@@ -17,11 +17,11 @@ import urllib.parse as up
 
 import psycopg2
 import psycopg2.extras as pg_extras
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 from clean import clean_data
 from db_config import get_connection
-from query_data import get_all_results
+from query_data import get_all_results, get_filtered_results
 from scrape import scrape_data
 
 
@@ -143,7 +143,7 @@ def _get_query_fn(flask_app):
     return fn
 
 
-def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
+def create_app(scraper_fn=None, loader_fn=None, query_fn=None, filtered_fn=None):
     """
     Application factory.
 
@@ -155,12 +155,16 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
         Fully replaces the entire scrape→clean→insert pipeline (for tests).
     query_fn : callable | None
         Injected query function replacing get_all_results (for tests).
+    filtered_fn : callable | None
+        Injected function replacing get_filtered_results, used by
+        /api/search (for tests).
     """
     flask_app = Flask(__name__, template_folder="templates", static_folder="static")
     flask_app.config["DATABASE_URL"] = os.environ.get("DATABASE_URL", "")
     flask_app.config["SCRAPER_FN"] = scraper_fn
     flask_app.config["LOADER_FN"] = loader_fn
     flask_app.config["QUERY_FN"] = query_fn
+    flask_app.config["FILTERED_FN"] = filtered_fn
 
     # ------------------------------------------------------------------
     # Routes
@@ -182,6 +186,37 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
         try:
             data = _get_query_fn(flask_app)()
             return jsonify({"status": "ok", "data": data})
+        except (psycopg2.DatabaseError, OSError, RuntimeError) as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 500
+
+    @flask_app.route("/api/search")
+    def api_search():
+        """
+        Search applicants by term (user-supplied). Demonstrates the safe
+        parameterized query path end-to-end: `term` and `limit` come
+        straight from the query string, so this is the endpoint that
+        actually needs to be safe against SQL injection and abuse — not
+        just the underlying query function in isolation.
+
+        `term` is bound as a query parameter (never concatenated into
+        SQL text), so injection payloads are treated as a literal search
+        string, not executable SQL. `limit` is parsed defensively (a
+        non-numeric value falls back to a default rather than crashing)
+        and is clamped server-side in get_filtered_results regardless of
+        what's requested, so an oversized or negative limit can't be used
+        to dump the whole table or error out the request.
+        """
+        term = request.args.get("term", "")
+        raw_limit = request.args.get("limit", "20")
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            limit = 20
+
+        fn = flask_app.config.get("FILTERED_FN") or get_filtered_results
+        try:
+            rows = fn(term=term, limit=limit)
+            return jsonify({"status": "ok", "term": term, "count": len(rows), "data": rows})
         except (psycopg2.DatabaseError, OSError, RuntimeError) as exc:
             return jsonify({"status": "error", "message": str(exc)}), 500
 

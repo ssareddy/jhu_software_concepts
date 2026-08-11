@@ -45,6 +45,15 @@ from typing import Any
 RAW_FILE   = Path("../module_2/raw_results.json")
 CLEAN_FILE = Path("../module_2/applicant_data.json")
 
+# Matches a trailing degree keyword (e.g. "...PhysicsPhD" -> "Physics").
+# Compiled once at module load instead of per-call inside _clean_record.
+_DEGREE_SUFFIX_RE = re.compile(
+    r"\s*(phd|ph\.d\.?|psyd|psy\.d\.?|edd|ed\.d\.?|doctoral|doctorate|"
+    r"masters?|m\.s\.?|m\.a\.?|mba|meng|m\.eng\.?|mfa|mpp|mpa|"
+    r"mph|msw|jd|llm|dma|ind|other)\s*$",
+    re.I,
+)
+
 # Mapping common status strings to canonical values
 _STATUS_MAP = {
     "accepted": "Accepted",
@@ -324,6 +333,74 @@ def _split_institution_program(raw: str) -> tuple[str | None, str | None]:
     return raw.strip() or None, None
 
 
+def _extract_program_field(col1: str, raw: dict) -> tuple[str | None, str | None, str | None]:
+    """Derive (program_field, university, program_name) from col1
+    ("Program · DegreeType") and the raw institution/program text."""
+    if "·" in col1:
+        parts = [p.strip() for p in col1.split("·", 1)]
+        program_name = parts[0].strip(" ,·").strip()
+    else:
+        program_name = _DEGREE_SUFFIX_RE.sub("", col1).strip().strip(",·").strip()
+
+    university = _strip_html(raw.get("raw_institution_program", "")).strip()
+    if program_name and university:
+        program_field = f"{program_name}, {university}"
+    else:
+        program_field = program_name or university or None
+
+    return program_field, university or None, program_name or None
+
+
+def _extract_comments(notes_clean: str) -> str:
+    """Return the free-text applicant comment, or '' if it's just a
+    restated status (e.g. "Accepted")."""
+    status_only = re.fullmatch(
+        r"\s*(accepted|rejected|waitlisted|wait\s*listed|interview(?:ed)?)\s*",
+        notes_clean, re.I,
+    )
+    return "" if (not notes_clean or status_only) else notes_clean
+
+
+def _extract_status_and_dates(decision: str) -> tuple[str | None, str | None, str | None]:
+    """Derive (status, acceptance_date, rejection_date) from the decision
+    segment, e.g. "Accepted on May 15"."""
+    status = decision.strip() or None
+    acceptance_date = None
+    rejection_date = None
+    if status:
+        accept_match = re.search(
+            r"(?:accepted|wait\s*listed|interview\w*)\s+on\s+([A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)",
+            status, re.I,
+        )
+        if accept_match:
+            acceptance_date = accept_match.group(1).strip()
+        reject_match = re.search(
+            r"rejected\s+on\s+([A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)",
+            status, re.I,
+        )
+        if reject_match:
+            rejection_date = reject_match.group(1).strip()
+    return status, acceptance_date, rejection_date
+
+
+def _extract_metrics(col1: str, tags: str, notes_clean: str) -> dict:
+    """Derive term, US/International status, GPA, GRE scores, and degree
+    from the tags line, notes, and col1 text."""
+    gre = _extract_gre(tags + " " + notes_clean)
+    gpa_val = _extract_gpa(tags) or _extract_gpa(notes_clean)
+    combined_text = " ".join(filter(None, [col1, tags, notes_clean]))
+
+    return {
+        "term": _extract_semester_year(tags) or _extract_semester_year(notes_clean) or None,
+        "us_intl": _extract_student_type(tags) or _extract_student_type(notes_clean) or None,
+        "gpa_str": str(gpa_val) if gpa_val is not None else None,
+        "gre_total": gre["gre_total"],
+        "gre_verbal": gre["gre_verbal"],
+        "gre_aw": gre["gre_aw"],
+        "degree": _normalize_degree(combined_text),
+    }
+
+
 def _clean_record(raw: dict) -> dict:
     """
     Extract and structure all fields from a single raw scraped record,
@@ -341,106 +418,38 @@ def _clean_record(raw: dict) -> dict:
 
     raw_degree_status from the scraper is pipe-joined:
       "{col1: ProgramDegree} | {decision label} | {tags line}"
-    e.g. "Consumer ScienceMasters | Accepted on May 15 | Accepted on May 15   Fall 2026   International   GPA 3.84"
+    e.g. "Consumer ScienceMasters | Accepted on May 15 | Accepted on May 15 "
+         "Fall 2026   International   GPA 3.84"
     """
     segments = [s.strip() for s in raw.get("raw_degree_status", "").split(" | ")]
     col1     = segments[0] if len(segments) > 0 else ""   # "ProgramDegree"
     decision = segments[1] if len(segments) > 1 else ""   # "Accepted on May 15"
     tags     = segments[2] if len(segments) > 2 else ""   # full tags line
 
-    # ---- program: "ProgramName, University" --------------------------------
-    # col1 from the scraper is "Program · DegreeType" (middot-separated).
-    # Split on · first if present; otherwise fall back to stripping the degree
-    # keyword suffix (handles legacy "PhysicsPhD" concatenated format too).
-    if "·" in col1:
-        parts = [p.strip() for p in col1.split("·", 1)]
-        program_name = parts[0].strip(" ,·").strip()
-    else:
-        _DEGREE_SUFFIX = re.compile(
-            r"\s*(phd|ph\.d\.?|psyd|psy\.d\.?|edd|ed\.d\.?|doctoral|doctorate|"
-            r"masters?|m\.s\.?|m\.a\.?|mba|meng|m\.eng\.?|mfa|mpp|mpa|"
-            r"mph|msw|jd|llm|dma|ind|other)\s*$",
-            re.I,
-        )
-        program_name = _DEGREE_SUFFIX.sub("", col1).strip().strip(",·").strip()
-
-    university = _strip_html(raw.get("raw_institution_program", "")).strip()
-    # "Program, University" — no trailing space.
-    if program_name and university:
-        program_field = f"{program_name}, {university}"
-    else:
-        program_field = program_name or university or None
-
-    # ---- comments ----------------------------------------------------------
-    raw_notes   = raw.get("raw_notes", "")
-    notes_clean = _strip_html(raw_notes).strip()
-    status_only = re.fullmatch(
-        r"\s*(accepted|rejected|waitlisted|wait\s*listed|interview(?:ed)?)\s*",
-        notes_clean, re.I,
-    )
-    comments = "" if (not notes_clean or status_only) else notes_clean
-
-    # ---- date_added: "Month DD, YYYY" (no prefix) --------------------------
-    raw_date   = raw.get("raw_date", "").strip()
-    date_added = raw_date if raw_date else None
-
-    # ---- status ------------------------------------------------------------
-    status = decision.strip() or None
-
-    # ---- acceptance_date / rejection_date ----------------------------------
-    acceptance_date = None
-    rejection_date  = None
-    if status:
-        m = re.search(
-            r"(?:accepted|wait\s*listed|interview\w*)\s+on\s+([A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)",
-            status, re.I,
-        )
-        if m:
-            acceptance_date = m.group(1).strip()
-        m = re.search(
-            r"rejected\s+on\s+([A-Za-z]+\s+\d{1,2}(?:,?\s*\d{4})?)",
-            status, re.I,
-        )
-        if m:
-            rejection_date = m.group(1).strip()
-
-    # ---- term --------------------------------------------------------------
-    term = _extract_semester_year(tags) or _extract_semester_year(notes_clean) or None
-
-    # ---- US/International --------------------------------------------------
-    us_intl = _extract_student_type(tags) or _extract_student_type(notes_clean) or None
-
-    # ---- GPA: plain numeric string e.g. "3.88", null when not found --------
-    gpa_val = _extract_gpa(tags) or _extract_gpa(notes_clean)
-    gpa_str = str(gpa_val) if gpa_val is not None else None
-
-    # ---- GRE: always present, null when not found --------------------------
-    gre        = _extract_gre(tags + " " + notes_clean)
-    gre_total  = gre["gre_total"]
-    gre_verbal = gre["gre_verbal"]
-    gre_aw     = gre["gre_aw"]
-
-    # ---- Degree ------------------------------------------------------------
-    combined_text = " ".join(filter(None, [col1, tags, notes_clean]))
-    degree = _normalize_degree(combined_text)
+    program_field, university, program_name = _extract_program_field(col1, raw)
+    notes_clean = _strip_html(raw.get("raw_notes", "")).strip()
+    comments = _extract_comments(notes_clean)
+    date_added = raw.get("raw_date", "").strip() or None
+    status, acceptance_date, rejection_date = _extract_status_and_dates(decision)
+    metrics = _extract_metrics(col1, tags, notes_clean)
 
     return {
         "program":          program_field,
-        "university_raw":   university or None,
-        "program_raw":      program_name or None,
+        "university_raw":   university,
+        "program_raw":      program_name,
         "comments":         comments,
         "date_added":       date_added,
         "url":              raw.get("url") or None,
         "status":           status,
         "acceptance_date":  acceptance_date,
         "rejection_date":   rejection_date,
-        "term":             term,
-        "US/International": us_intl,
-        "Degree":           degree,
-        "GPA":              gpa_str,
-        "GRE":              gre_total,
-        "GRE V":            gre_verbal,
-        "GRE AW":           gre_aw,
+        "term":             metrics["term"],
+        "US/International": metrics["us_intl"],
+        "Degree":           metrics["degree"],
+        "GPA":              metrics["gpa_str"],
+        "GRE":              metrics["gre_total"],
+        "GRE V":            metrics["gre_verbal"],
+        "GRE AW":           metrics["gre_aw"],
     }
 
 # ---------------------------------------------------------------------------
@@ -498,7 +507,7 @@ def load_data(path: Path = CLEAN_FILE) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    with open(RAW_FILE, encoding="utf-8") as fh:
-        raw = json.load(fh)
-    cleaned = clean_data(raw)
-    save_data(cleaned)
+    with open(RAW_FILE, encoding="utf-8") as raw_fh:
+        raw_data = json.load(raw_fh)
+    cleaned_data = clean_data(raw_data)
+    save_data(cleaned_data)

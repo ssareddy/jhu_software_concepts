@@ -12,22 +12,42 @@ DATABASE_URL env var overrides DB_CONFIG when set.
 
 import os
 import threading
+import urllib.parse
+import psycopg2
 from flask import Flask, jsonify, render_template
+
+from clean import clean_data
+from db_config import get_connection
+from load_data import create_table, load_records
+from query_data import get_all_results
+from scrape import scrape_data
+
 
 # ---------------------------------------------------------------------------
 # Thread-safe busy state
+#
+# Kept as a simple module-level flag + lock (rather than wrapped in a
+# class) because the test suite is directly coupled to this exact shape —
+# many tests reset state between runs via `app_module._scrape_running =
+# False`, bypassing any wrapper entirely. Forcing that onto a class
+# instance would either break those tests or require a fragile "kept in
+# sync" shim between two sources of truth. The two `global` statements
+# below are the deliberate, narrow cost of preserving that contract.
 # ---------------------------------------------------------------------------
 _scrape_lock = threading.Lock()
 _scrape_running = False
 
 
 def _set_busy(val: bool) -> None:
+    """Set the shared busy flag (used by the pipeline and by tests to
+    reset state between runs)."""
     global _scrape_running
     with _scrape_lock:
         _scrape_running = val
 
 
 def is_busy() -> bool:
+    """Whether a scrape is currently in progress."""
     return _scrape_running
 
 
@@ -37,6 +57,28 @@ def _parse_float(val):
         return float(val) if val not in (None, "", "N/A") else None
     except (ValueError, TypeError):
         return None
+
+
+def _connect(db_url: str):
+    """Open a DB connection, either from an explicit DATABASE_URL override
+    or via db_config's environment-based configuration."""
+    if not db_url:
+        return get_connection()
+    parsed = urllib.parse.urlparse(db_url)
+    return psycopg2.connect(
+        host=parsed.hostname, port=parsed.port or 5432,
+        dbname=parsed.path.lstrip("/"), user=parsed.username,
+        password=parsed.password or "",
+    )
+
+
+def _fetch_raw_records(scraper_fn):
+    """Get raw scraped records, either from an injected fake (tests) or
+    the real scraper (production; requires a live browser, so this branch
+    is intentionally excluded from coverage)."""
+    if scraper_fn is not None:
+        return scraper_fn()
+    return scrape_data(max_pages=10, output_file=None, start_page=1)  # pragma: no cover
 
 
 def run_scraper_pipeline(scraper_fn, db_url=""):
@@ -50,64 +92,56 @@ def run_scraper_pipeline(scraper_fn, db_url=""):
     db_url : str
         DATABASE_URL override for the DB connection.
     """
-    import sys
-    import psycopg2
-    from psycopg2 import extras
-
-    module_dir = os.path.abspath(os.path.dirname(__file__))
-    sys.path.insert(0, module_dir)
-
+    conn = None
     try:
-        if scraper_fn is not None:
-            raw_records = scraper_fn()
-        else:
-            from scrape import scrape_data  # pragma: no cover
-            raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)  # pragma: no cover
-
-        from clean import clean_data
+        raw_records = _fetch_raw_records(scraper_fn)
         cleaned = clean_data(raw_records)
+        conn = _connect(db_url)
 
-        from db_config import get_connection, get_db_config
-        if db_url:
-            import urllib.parse as up
-            r = up.urlparse(db_url)
-            conn = psycopg2.connect(
-                host=r.hostname, port=r.port or 5432,
-                dbname=r.path.lstrip("/"), user=r.username,
-                password=r.password or "",
-            )
-        else:
-            conn = get_connection()
-
-        rows = [
-            (
-                r.get("program"), r.get("comments"), r.get("date_added"),
-                r.get("url"), r.get("status"), r.get("term"),
-                r.get("US/International"), _parse_float(r.get("GPA")),
-                _parse_float(r.get("GRE")), _parse_float(r.get("GRE V")),
-                _parse_float(r.get("GRE AW")), r.get("Degree"),
-                r.get("llm-generated-program"), r.get("llm-generated-university"),
-            )
-            for r in cleaned
-        ]
-
-        INSERT_SQL = """
-            INSERT INTO applicants (
-                program, comments, date_added, url, status, term,
-                us_or_international, gpa, gre, gre_v, gre_aw, degree,
-                llm_generated_program, llm_generated_university
-            ) VALUES %s
-            ON CONFLICT (url) DO NOTHING;
-        """
-        with conn.cursor() as cur:
-            extras.execute_values(cur, INSERT_SQL, rows, page_size=500)
-        conn.commit()
+        # Reuse load_data.py's real insert logic (content_hash-based dedup)
+        # instead of a second hand-rolled INSERT — that duplication is what
+        # let this path's dedup drift out of sync with load_data.py's in
+        # the first place (it fell back to `ON CONFLICT (url)` alone, which
+        # silently fails to dedupe records with a missing/malformed url).
+        create_table(conn)
+        inserted, skipped = load_records(conn, cleaned)
         conn.close()
-        print(f"✓ Scrape complete. {len(rows)} records processed.")
-    except Exception as e:
+        print(f"✓ Scrape complete. {inserted} rows inserted, {skipped} skipped.")
+    except (psycopg2.Error, RuntimeError, ValueError, TypeError, OSError) as e:
         print(f"Scraper/load error: {e}")
+        # If a connection was opened, roll back any partial work and close
+        # it. Without this, a failure mid-insert leaves an open transaction
+        # holding table locks, and the next pull would inherit a stale
+        # connection instead of a clean one.
+        try:
+            if conn is not None:
+                conn.rollback()
+                conn.close()
+        except psycopg2.Error:
+            pass
     finally:
         _set_busy(False)
+
+
+def _default_runner(app: Flask):
+    """Build the background-thread target for a Pull Data request, using
+    whatever scraper_fn/loader_fn the app was configured with."""
+    loader_fn = app.config.get("LOADER_FN")
+    if loader_fn is not None:
+        return loader_fn
+
+    scraper_fn = app.config.get("SCRAPER_FN")
+    db_url = app.config.get("DATABASE_URL", "")
+
+    def runner():
+        run_scraper_pipeline(scraper_fn, db_url=db_url)
+
+    return runner
+
+
+def _resolve_query_fn(app: Flask):
+    """Return the app's injected query_fn, or the real get_all_results."""
+    return app.config.get("QUERY_FN") or get_all_results
 
 
 def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
@@ -125,10 +159,9 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     """
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["DATABASE_URL"] = os.environ.get("DATABASE_URL", "")
-
-    app._scraper_fn = scraper_fn
-    app._loader_fn  = loader_fn
-    app._query_fn   = query_fn
+    app.config["SCRAPER_FN"] = scraper_fn
+    app.config["LOADER_FN"] = loader_fn
+    app.config["QUERY_FN"] = query_fn
 
     # ------------------------------------------------------------------
     # Routes
@@ -148,13 +181,9 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
     def api_results():
         """Return all query results as JSON."""
         try:
-            fn = app._query_fn
-            if fn is None:
-                from query_data import get_all_results
-                fn = get_all_results
-            data = fn()
+            data = _resolve_query_fn(app)()
             return jsonify({"status": "ok", "data": data})
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError, RuntimeError) as e:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     @app.route("/api/pull_data", methods=["POST"])
@@ -163,18 +192,13 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
         global _scrape_running
         with _scrape_lock:
             if _scrape_running:
-                return jsonify({"busy": True, "message": "A data pull is already in progress."}), 409
+                return jsonify({
+                    "busy": True,
+                    "message": "A data pull is already in progress.",
+                }), 409
             _scrape_running = True
 
-        db_url = app.config.get("DATABASE_URL", "")
-
-        if app._loader_fn is not None:
-            runner = app._loader_fn
-        else:
-            def runner():
-                run_scraper_pipeline(app._scraper_fn, db_url=db_url)
-
-        thread = threading.Thread(target=runner, daemon=True)
+        thread = threading.Thread(target=_default_runner(app), daemon=True)
         thread.start()
 
         return jsonify({"ok": True, "message": "Data pull started!"}), 200
@@ -185,13 +209,9 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
         if is_busy():
             return jsonify({"busy": True, "message": "Pull in progress."}), 409
         try:
-            fn = app._query_fn
-            if fn is None:
-                from query_data import get_all_results
-                fn = get_all_results
-            data = fn()
+            data = _resolve_query_fn(app)()
             return jsonify({"ok": True, "data": data})
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError, RuntimeError) as e:
             return jsonify({"status": "error", "message": str(e)}), 500
 
     @app.route("/api/scrape_status")
@@ -203,5 +223,5 @@ def create_app(scraper_fn=None, loader_fn=None, query_fn=None):
 
 
 if __name__ == "__main__":  # pragma: no cover
-    app = create_app()
-    app.run(host="localhost", port=8080)
+    flask_app = create_app()
+    flask_app.run(host="localhost", port=8080)

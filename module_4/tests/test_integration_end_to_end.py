@@ -74,13 +74,13 @@ def test_e2e_pull_data_inserts_rows(clean_db):
     flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
     client = flask_app.test_client()
 
-    orig_loader = flask_app._loader_fn
+    orig_loader = flask_app.config["LOADER_FN"]
 
     def waiting_loader():
         orig_loader()
         done.set()
 
-    flask_app._loader_fn = waiting_loader
+    flask_app.config["LOADER_FN"] = waiting_loader
 
     resp = client.post("/api/pull_data")
     assert resp.status_code == 200
@@ -99,13 +99,13 @@ def test_e2e_update_analysis_returns_200_after_pull(clean_db):
     flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
     client = flask_app.test_client()
 
-    orig_loader = flask_app._loader_fn
+    orig_loader = flask_app.config["LOADER_FN"]
 
     def waiting_loader():
         orig_loader()
         done.set()
 
-    flask_app._loader_fn = waiting_loader
+    flask_app.config["LOADER_FN"] = waiting_loader
 
     client.post("/api/pull_data")
     done.wait(timeout=5)
@@ -123,13 +123,13 @@ def test_e2e_render_shows_updated_analysis(clean_db):
     flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
     client = flask_app.test_client()
 
-    orig_loader = flask_app._loader_fn
+    orig_loader = flask_app.config["LOADER_FN"]
 
     def waiting_loader():
         orig_loader()
         done.set()
 
-    flask_app._loader_fn = waiting_loader
+    flask_app.config["LOADER_FN"] = waiting_loader
 
     client.post("/api/pull_data")
     done.wait(timeout=5)
@@ -147,13 +147,13 @@ def test_e2e_pct_international_correctly_formatted(clean_db):
     flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
     client = flask_app.test_client()
 
-    orig_loader = flask_app._loader_fn
+    orig_loader = flask_app.config["LOADER_FN"]
 
     def waiting_loader():
         orig_loader()
         done.set()
 
-    flask_app._loader_fn = waiting_loader
+    flask_app.config["LOADER_FN"] = waiting_loader
 
     client.post("/api/pull_data")
     done.wait(timeout=5)
@@ -202,7 +202,7 @@ def test_e2e_double_pull_no_duplicates(clean_db):
     done1.wait(timeout=5)
 
     # Second pull — swap loader, reset busy
-    flask_app._loader_fn = make_loader(done2)
+    flask_app.config["LOADER_FN"] = make_loader(done2)
     client.post("/api/pull_data")
     done2.wait(timeout=5)
 
@@ -253,13 +253,13 @@ def test_e2e_analysis_page_renders_after_pull(clean_db):
     flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
     client = flask_app.test_client()
 
-    orig_loader = flask_app._loader_fn
+    orig_loader = flask_app.config["LOADER_FN"]
 
     def waiting_loader():
         orig_loader()
         done.set()
 
-    flask_app._loader_fn = waiting_loader
+    flask_app.config["LOADER_FN"] = waiting_loader
 
     client.post("/api/pull_data")
     done.wait(timeout=5)
@@ -282,13 +282,13 @@ def test_e2e_analysis_page_reflects_api_results_after_update(clean_db):
     flask_app = _make_e2e_app(SAMPLE_RECORDS, clean_db)
     client = flask_app.test_client()
 
-    orig_loader = flask_app._loader_fn
+    orig_loader = flask_app.config["LOADER_FN"]
 
     def waiting_loader():
         orig_loader()
         done.set()
 
-    flask_app._loader_fn = waiting_loader
+    flask_app.config["LOADER_FN"] = waiting_loader
 
     client.post("/api/pull_data")
     done.wait(timeout=5)

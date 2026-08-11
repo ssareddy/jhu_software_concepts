@@ -10,15 +10,15 @@ Connection is resolved entirely from environment variables via db_config.py:
 
 or with individual variables:
 
-    DB_HOST=localhost DB_PORT=5432 DB_NAME=gradcafe DB_USER=postgres DB_PASSWORD=secret python query_data.py
+    DB_HOST=localhost DB_PORT=5432 DB_NAME=gradcafe DB_USER=postgres \
+        DB_PASSWORD=secret python query_data.py
 
 No credentials are hard-coded here.
 """
 
-import os
 import psycopg2
 
-from db_config import get_db_config, get_connection
+from db_config import get_db_config
 
 # Re-export DB_CONFIG as a mutable dict so tests can patch it without
 # touching the environment.  Always reflects the current environment at
@@ -32,16 +32,15 @@ def _conn():
     return psycopg2.connect(**DB_CONFIG)
 
 
-def run_queries():  # pragma: no cover
-    conn = _conn()
-    cur = conn.cursor()
-
-    # Q1
+def _print_q1_fall_2026_count(cur):  # pragma: no cover
+    """Q1: How many entries applied for Fall 2026?"""
     cur.execute("SELECT COUNT(*) FROM applicants WHERE term ILIKE '%Fall 2026%';")
     fall_2026_count = cur.fetchone()[0]
     print(f"Applicant count: {fall_2026_count}")
 
-    # Q2
+
+def _print_q2_pct_international(cur):  # pragma: no cover
+    """Q2: Percentage of international students (not American or Other)."""
     cur.execute("""
         SELECT
             ROUND(
@@ -58,14 +57,15 @@ def run_queries():  # pragma: no cover
             COUNT(*) FILTER (WHERE us_or_international ILIKE '%other%') AS other_count
         FROM applicants;
     """)
-    row = cur.fetchone()
-    pct_intl, intl_count, us_count, other_count = row
+    pct_intl, intl_count, us_count, other_count = cur.fetchone()
     print(f"International count: {intl_count}")
     print(f"US count: {us_count}")
     print(f"Other count: {other_count}")
     print(f"Percent International {pct_intl}")
 
-    # Q3
+
+def _print_q3_score_averages(cur):  # pragma: no cover
+    """Q3: Average GPA, GRE, GRE V, GRE AW of applicants who provide them."""
     cur.execute("""
         SELECT
             ROUND(AVG(gpa)::numeric,   2) AS avg_gpa,
@@ -82,7 +82,9 @@ def run_queries():  # pragma: no cover
     print(f"Average GPA: {avg_gpa}, Average GRE: {avg_gre}, "
           f"Average GRE V: {avg_gre_v}, Average GRE AW: {avg_gre_aw}")
 
-    # Q4
+
+def _print_q4_avg_gpa_american_fall_2026(cur):  # pragma: no cover
+    """Q4: Average GPA of American students in Fall 2026."""
     cur.execute("""
         SELECT ROUND(AVG(gpa)::numeric, 2)
         FROM applicants
@@ -93,7 +95,9 @@ def run_queries():  # pragma: no cover
     avg_gpa_american = cur.fetchone()[0]
     print(f"Average GPA American: {avg_gpa_american}")
 
-    # Q5
+
+def _print_q5_pct_accepted_fall_2026(cur):  # pragma: no cover
+    """Q5: Percent of Fall 2026 entries that are Acceptances."""
     cur.execute("""
         SELECT
             COUNT(*) FILTER (WHERE status ILIKE '%accept%') AS accept_count,
@@ -106,11 +110,13 @@ def run_queries():  # pragma: no cover
         FROM applicants
         WHERE term ILIKE '%Fall 2026%';
     """)
-    accept_count, total_fall, pct_accepted = cur.fetchone()
+    accept_count, _total_fall, pct_accepted = cur.fetchone()
     print(f"Acceptance count: {accept_count}")
     print(f"Acceptance percent: {pct_accepted}")
 
-    # Q6
+
+def _print_q6_avg_gpa_accepted_fall_2026(cur):  # pragma: no cover
+    """Q6: Average GPA of Fall 2026 applicants who are Acceptances."""
     cur.execute("""
         SELECT ROUND(AVG(gpa)::numeric, 2)
         FROM applicants
@@ -121,7 +127,9 @@ def run_queries():  # pragma: no cover
     avg_gpa_accepted = cur.fetchone()[0]
     print(f"Average GPA Acceptance: {avg_gpa_accepted}")
 
-    # Q7
+
+def _print_q7_jhu_ms_cs_count(cur):  # pragma: no cover
+    """Q7: Entries from applicants who applied to JHU for a Masters in CS."""
     cur.execute("""
         SELECT COUNT(*)
         FROM applicants
@@ -139,7 +147,10 @@ def run_queries():  # pragma: no cover
     jhu_ms_cs_count = cur.fetchone()[0]
     print(f"JHU Masters Computer Science count: {jhu_ms_cs_count}")
 
-    # Q8
+
+def _print_q8_q9_top_school_phd_cs_acceptances(cur):  # pragma: no cover
+    """Q8/Q9: Fall 2026 acceptances to Georgetown/MIT/Stanford/CMU for PhD CS,
+    using scraped fields (Q8) vs LLM-generated fields (Q9)."""
     cur.execute("""
         SELECT COUNT(*)
         FROM applicants
@@ -159,7 +170,6 @@ def run_queries():  # pragma: no cover
     q8_scraped_count = cur.fetchone()[0]
     print(f"Q8 (Scraped fields) - PhD CS Acceptances at top schools in 2026: {q8_scraped_count}")
 
-    # Q9
     cur.execute("""
         SELECT COUNT(*)
         FROM applicants
@@ -179,7 +189,10 @@ def run_queries():  # pragma: no cover
     q9_llm_count = cur.fetchone()[0]
     print(f"Q9 (LLM fields) - PhD CS Acceptances at top schools in 2026: {q9_llm_count}")
 
-    # Q10
+
+def _print_q10_degree_gpa(cur):  # pragma: no cover
+    """Custom Q10: Which degree type (PhD vs Masters) has the higher average
+    GPA among Fall 2026 applicants?"""
     cur.execute("""
         SELECT
             CASE
@@ -199,7 +212,10 @@ def run_queries():  # pragma: no cover
     for row in cur.fetchall():
         print(f"  {row[0]}: avg GPA = {row[1]}, count = {row[2]}")
 
-    # Q11
+
+def _print_q11_nationality_acceptance(cur):  # pragma: no cover
+    """Custom Q11: What is the acceptance rate by nationality (American vs
+    International) for Fall 2026 PhD Computer Science applicants?"""
     cur.execute("""
         SELECT
             us_or_international,
@@ -224,6 +240,27 @@ def run_queries():  # pragma: no cover
     print("\nCustom Q11: PhD CS Fall 2026 Acceptance Rate by Nationality")
     for row in cur.fetchall():
         print(f"  {row[0]}: total={row[1]}, accepted={row[2]}, rate={row[3]}%")
+
+
+def run_queries():  # pragma: no cover
+    """Run all required and custom analysis questions, printing results.
+
+    This is a CLI-only print wrapper; the same logic is exercised (and
+    tested) via get_all_results(), which the Flask app consumes.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+
+    _print_q1_fall_2026_count(cur)
+    _print_q2_pct_international(cur)
+    _print_q3_score_averages(cur)
+    _print_q4_avg_gpa_american_fall_2026(cur)
+    _print_q5_pct_accepted_fall_2026(cur)
+    _print_q6_avg_gpa_accepted_fall_2026(cur)
+    _print_q7_jhu_ms_cs_count(cur)
+    _print_q8_q9_top_school_phd_cs_acceptances(cur)
+    _print_q10_degree_gpa(cur)
+    _print_q11_nationality_acceptance(cur)
 
     cur.close()
     conn.close()

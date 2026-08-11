@@ -720,10 +720,12 @@ def test_load_records_exception_in_build_row(clean_db):
     create_table(clean_db)
 
     # Inject a record that will cause build_row to raise by passing
-    # a non-dict object inside the list
+    # a non-dict object inside the list. TypeError mirrors a realistic
+    # failure mode (e.g. calling .get() on something that isn't a dict),
+    # matching the exception types load_records' except clause narrows to.
     class BadRecord:
         def get(self, key, default=None):
-            raise RuntimeError("forced error")
+            raise TypeError("forced error")
 
     inserted, skipped = load_records(clean_db, [BadRecord()])
     assert skipped == 1
@@ -828,7 +830,11 @@ def test_run_scraper_pipeline_with_db_url():
         )
 
     app_module._set_busy(False)
-    mock_conn.commit.assert_called_once()
+    # commit() is now called twice: once by load_data.create_table (after
+    # CREATE TABLE IF NOT EXISTS) and once by load_data.load_records (after
+    # the insert) — run_scraper_pipeline reuses load_data.py's real functions
+    # instead of a separate hand-rolled insert+commit.
+    assert mock_conn.commit.call_count == 2
     mock_conn.close.assert_called_once()
 
 

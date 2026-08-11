@@ -266,7 +266,7 @@ def test_loader_error_pull_data_returns_non_200_on_subsequent_check():
             app_module._set_busy(False)
             finished2.set()
 
-    flask_app._loader_fn = second_failing_loader
+    flask_app.config["LOADER_FN"] = second_failing_loader
     resp2 = client.post("/api/pull_data")
     finished2.wait(timeout=3)
     assert resp2.status_code == 200

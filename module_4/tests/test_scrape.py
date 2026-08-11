@@ -176,6 +176,19 @@ def test_parse_entry_too_few_cells_returns_empty_dict():
 
 
 @pytest.mark.analysis
+def test_parse_entry_exactly_three_cells_no_decision_cell():
+    """_parse_entry handles a row with exactly 3 cells (no 4th/decision
+    cell) without error — raw_decision stays empty rather than raising."""
+    from scrape import _parse_entry
+    summary, _, _ = _make_rows(
+        '<tr><td>School</td><td>Program</td><td>Jan 15, 2024</td></tr>'
+    )
+    result = _parse_entry(summary, None, None)
+    assert result["raw_institution_program"] == "School"
+    assert result["raw_date"] == "Jan 15, 2024"
+
+
+@pytest.mark.analysis
 def test_parse_entry_no_tags_no_notes():
     """_parse_entry works when tags_row and notes_row are None."""
     from scrape import _parse_entry

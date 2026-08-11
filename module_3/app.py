@@ -7,20 +7,87 @@ Flask web application that:
   - Provides an "Update Analysis" button to refresh query results
 """
 
-import os
 import threading
-import subprocess
-import sys
+
+import psycopg2
+from psycopg2 import extras
 from flask import Flask, jsonify, render_template
 
-# Import query helpers from query_data.py
 from query_data import get_all_results
+from db_config import get_connection
+from load_data import compute_row_hash, parse_float, parse_date, INSERT_SQL
+from scrape import scrape_data
+from clean import clean_data
 
 app = Flask(__name__)
 
-# Thread-safe flag to track if scraping is currently running
-_scrape_lock = threading.Lock()
-_scrape_running = False
+
+class _ScrapeState:
+    """Thread-safe flag tracking whether a scrape is currently running."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._running = False
+
+    def try_start(self) -> bool:
+        """Mark scraping as running. Returns False if already running."""
+        with self._lock:
+            if self._running:
+                return False
+            self._running = True
+            return True
+
+    def finish(self) -> None:
+        """Mark scraping as finished."""
+        with self._lock:
+            self._running = False
+
+    @property
+    def running(self) -> bool:
+        """Whether a scrape is currently in progress."""
+        with self._lock:
+            return self._running
+
+
+_scrape_state = _ScrapeState()
+
+
+def _build_row(record: dict) -> tuple:
+    """Convert one cleaned scrape record into an applicants-table row tuple,
+    including its row_hash for dedup."""
+    fields = {
+        "program": record.get("program"),
+        "comments": record.get("comments"),
+        "date_added": parse_date(record.get("date_added")),
+        "status": record.get("status"),
+        "term": record.get("term"),
+        "gpa": parse_float(record.get("GPA")),
+        "gre": parse_float(record.get("GRE")),
+        "gre_v": parse_float(record.get("GRE V")),
+        "gre_aw": parse_float(record.get("GRE AW")),
+        "degree": record.get("Degree"),
+    }
+    row_hash = compute_row_hash(fields)
+
+    return (
+        fields["program"], fields["comments"], fields["date_added"],
+        record.get("url"), fields["status"], fields["term"],
+        record.get("US/International"), fields["gpa"], fields["gre"],
+        fields["gre_v"], fields["gre_aw"], fields["degree"],
+        record.get("llm-generated-program"), record.get("llm-generated-university"),
+        row_hash,
+    )
+
+
+def _insert_rows(rows: list) -> None:
+    """Insert applicant rows into the database, skipping duplicates by row_hash."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            extras.execute_values(cur, INSERT_SQL, rows, page_size=500)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _run_scraper():
@@ -30,72 +97,25 @@ def _run_scraper():
     but applicant_data.json is never created — cleaned records go straight
     into the database via psycopg2.
     """
-    global _scrape_running
     try:
-        import psycopg2
-        from psycopg2 import extras
-        from pathlib import Path
-
-        module_dir = os.path.abspath(os.path.dirname(__file__))
-
         # Step 1: Scrape (output_file=None means no file written, records returned in memory)
-        sys.path.insert(0, module_dir)
-        from scrape import scrape_data
         raw_records = scrape_data(max_pages=10, output_file=None, start_page=1)
 
         # Step 2: Clean in memory
-        from clean import clean_data
         cleaned = clean_data(raw_records)
 
-        # Step 4: Insert directly into DB, skipping duplicates via url UNIQUE
-        from query_data import DB_CONFIG
-        conn = psycopg2.connect(**DB_CONFIG)
-
-        def parse_float(val):
-            try:
-                return float(val) if val not in (None, "", "N/A") else None
-            except (ValueError, TypeError):
-                return None
-
-        rows = []
-        for r in cleaned:
-            rows.append((
-                r.get("program"),
-                r.get("comments"),
-                r.get("date_added"),
-                r.get("url"),
-                r.get("status"),
-                r.get("term"),
-                r.get("US/International"),
-                parse_float(r.get("GPA")),
-                parse_float(r.get("GRE")),
-                parse_float(r.get("GRE V")),
-                parse_float(r.get("GRE AW")),
-                r.get("Degree"),
-                r.get("llm-generated-program"),
-                r.get("llm-generated-university"),
-            ))
-
-        INSERT_SQL = """
-            INSERT INTO applicants (
-                program, comments, date_added, url, status, term,
-                us_or_international, gpa, gre, gre_v, gre_aw, degree,
-                llm_generated_program, llm_generated_university
-            ) VALUES %s
-            ON CONFLICT (url) DO NOTHING;
-        """
-        with conn.cursor() as cur:
-            extras.execute_values(cur, INSERT_SQL, rows, page_size=500)
-        conn.commit()
-        conn.close()
+        # Step 3: Insert directly into DB, reusing load_data.py's row-hash
+        # dedup so this stays in sync with the load path and doesn't rely
+        # on `url` uniqueness alone.
+        rows = [_build_row(record) for record in cleaned]
+        _insert_rows(rows)
 
         print(f"✓ Scrape, clean, and load completed. {len(rows)} records processed.")
 
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, ImportError, psycopg2.Error) as e:
         print(f"Scraper/load error: {e}")
     finally:
-        with _scrape_lock:
-            _scrape_running = False
+        _scrape_state.finish()
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +134,7 @@ def api_results():
     try:
         data = get_all_results()
         return jsonify({"status": "ok", "data": data})
-    except Exception as e:
+    except psycopg2.Error as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -124,14 +144,11 @@ def api_pull_data():
     Trigger the Module 2 scraper to pull new data.
     Returns 409 if scraping is already running.
     """
-    global _scrape_running
-    with _scrape_lock:
-        if _scrape_running:
-            return jsonify({
-                "status": "running",
-                "message": "A data pull is already in progress. Please wait."
-            }), 409
-        _scrape_running = True
+    if not _scrape_state.try_start():
+        return jsonify({
+            "status": "running",
+            "message": "A data pull is already in progress. Please wait."
+        }), 409
 
     thread = threading.Thread(target=_run_scraper, daemon=True)
     thread.start()
@@ -146,7 +163,7 @@ def api_pull_data():
 @app.route("/api/scrape_status")
 def api_scrape_status():
     """Return whether a scrape is currently running."""
-    return jsonify({"running": _scrape_running})
+    return jsonify({"running": _scrape_state.running})
 
 
 if __name__ == "__main__":
