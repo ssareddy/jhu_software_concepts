@@ -102,6 +102,8 @@ services:
       SEED_JSON: ${SEED_JSON}
       TARGET_TABLE: ${TARGET_TABLE}
       ID_KEY: ${ID_KEY}
+    volumes:
+      - ./data:/data:ro
     depends_on:
       db:
         condition: service_healthy
@@ -113,6 +115,22 @@ volumes:
 COMPOSEEOF
 ```
 
+### 6b. Copy the Seed Data File
+
+The worker reads `SEED_JSON=/data/llm_extend_applicant_data.json` from inside its
+container — the `./data:/data:ro` volume mount above only works if that file
+actually exists on the **host**, in the same directory as `docker-compose.ec2.yml`.
+From your local machine (not the EC2 SSH session):
+
+```bash
+scp -i /path/to/module7-key.pem \
+    module_6/src/data/llm_extend_applicant_data.json \
+    ubuntu@18.222.232.131:~/module7/data/llm_extend_applicant_data.json
+```
+
+(Create the `~/module7/data/` directory on EC2 first if it doesn't exist:
+`mkdir -p ~/module7/data`.)
+
 ### 7. Deploy the Stack
 ```bash
 docker compose -f docker-compose.ec2.yml --env-file .env up -d
@@ -123,6 +141,18 @@ docker compose -f docker-compose.ec2.yml ps
 - Flask app reachable at: http://18.222.232.131:8080
 - Pull Data and Update Analysis buttons verified working
 - Worker processes tasks via RabbitMQ
+- **Analysis results show real, non-zero numbers** (applicant count, GPA
+  averages, percentages) — confirming the seed data actually loaded into
+  Postgres, not just that the app is reachable
+
+> **Correction note:** an earlier version of this deployment was missing the
+> `worker` service's `volumes: - ./data:/data:ro` mount, even though
+> `SEED_JSON=/data/llm_extend_applicant_data.json` pointed at that path. The
+> seed file never reached the container, so the database stayed empty and
+> every analysis result showed 0 — the app was reachable but had nothing to
+> display. Fixed by adding the volume mount (step 6 above) and copying the
+> actual seed JSON to the host at `~/module7/data/` (step 6b) before
+> redeploying.
 
 ### 9. Initialize Database Schema
 ```bash
