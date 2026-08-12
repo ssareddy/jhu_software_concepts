@@ -16,6 +16,9 @@ import argparse
 from dash import Dash, dcc, html
 
 from visualization import (
+    CLARITY_ORDER,
+    COLOR_ORDER,
+    CUT_ORDER,
     add_input_argument,
     build_animated_price_scatter_figure,
     clean_data,
@@ -31,27 +34,71 @@ IMG_STYLE = {
     "margin": "0 auto",
 }
 
-def build_conclusion_text(df) -> str:
-    """Build the guiding conclusion text, computing the correlation live.
+def _monotonic_grades(df) -> list:
+    """Determine which quality grades show a monotonic price-per-carat trend.
+
+    Computes mean price-per-carat for cut, color, and clarity from the
+    actual data and checks each for a monotonic increase from worst to
+    best grade, rather than assuming all three behave the same way.
 
     Args:
         df: Cleaned diamonds DataFrame.
 
     Returns:
-        The conclusion paragraph, with the carat/price correlation
-        computed from the actual data rather than typed in as a fixed
-        number.
+        The subset of ["cut", "color", "clarity"] whose mean
+        price-per-carat is strictly non-decreasing from worst to best
+        grade in this dataset.
+    """
+    price_per_carat = df["price"] / df["carat"]
+    grade_columns = {
+        "cut": (df["cut"], CUT_ORDER),
+        "color": (df["color"], COLOR_ORDER),
+        "clarity": (df["clarity"], CLARITY_ORDER),
+    }
+
+    monotonic = []
+    for name, (values, order) in grade_columns.items():
+        means = price_per_carat.groupby(values, observed=True).mean().reindex(order)
+        if means.is_monotonic_increasing:
+            monotonic.append(name)
+    return monotonic
+
+
+def build_conclusion_text(df) -> str:
+    """Build the guiding conclusion text, computing all claims live.
+
+    Args:
+        df: Cleaned diamonds DataFrame.
+
+    Returns:
+        The conclusion paragraph, with the carat/price correlation and
+        the set of quality grades showing a monotonic price-per-carat
+        premium both computed from the actual data rather than assumed.
     """
     carat_price_corr = df["carat"].corr(df["price"])
+    monotonic = _monotonic_grades(df)
+
+    if monotonic:
+        grade_list = ", ".join(monotonic)
+        verb = "shows" if len(monotonic) == 1 else "show"
+        premium_clause = (
+            f"Once price is normalized per carat, {grade_list} "
+            f"{verb} a clear, monotonic price premium as quality improves"
+        )
+    else:
+        premium_clause = (
+            "Once price is normalized per carat, quality grade still "
+            "shifts average price, though not in a strictly monotonic "
+            "step from worst to best grade"
+        )
+
     return (
         f"Carat weight is by far the strongest predictor of price "
         f"(r = {carat_price_corr:.2f}), and dominates the raw averages so "
         "heavily that lower-cut, larger stones can appear more expensive "
-        "on average than smaller, higher-cut ones. Once price is "
-        "normalized per carat, cut, color, and clarity grade all show a "
-        "clear, monotonic price premium as quality improves, confirming "
-        "that price is jointly explained by size and quality features "
-        "rather than size alone."
+        f"on average than smaller, higher-cut ones. {premium_clause}, "
+        "confirming that price is jointly explained by size and quality "
+        "features rather than size alone."
     )
 
 

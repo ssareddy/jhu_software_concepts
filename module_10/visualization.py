@@ -140,6 +140,22 @@ def explore_data(df: pd.DataFrame) -> None:
     # of size, a sub-question that directly supports the main research
     # question of whether price can be explained by features beyond size.
     df["price_per_carat"] = df["price"] / df["carat"]
+    print("\n=== Mean Price-per-Carat by Cut (size-normalized) ===")
+    print(
+        df.groupby("cut", observed=True)["price_per_carat"]
+        .mean()
+        .reindex(CUT_ORDER)
+        .round(2)
+    )
+
+    print("\n=== Mean Price-per-Carat by Color (size-normalized) ===")
+    print(
+        df.groupby("color", observed=True)["price_per_carat"]
+        .mean()
+        .reindex(COLOR_ORDER)
+        .round(2)
+    )
+
     print("\n=== Mean Price-per-Carat by Clarity (size-normalized) ===")
     print(
         df.groupby("clarity", observed=True)["price_per_carat"]

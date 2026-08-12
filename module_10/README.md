@@ -60,9 +60,14 @@ diamonds are more common at lower quality grades in this market, the
 **raw** average price is *not* monotonic with quality — for example, Ideal
 cut diamonds average $3,457 while Premium cut diamonds average $4,579,
 even though Ideal is the better cut. Normalizing price by carat
-(price-per-carat) removes this size confound and reveals the expected
-pattern: price-per-carat rises steadily with clarity grade, from $2,796/ct
-at the worst grade (I1) up to $4,259/ct at the best grade (IF).
+(price-per-carat) removes this size confound and reveals a real, if
+imperfect, quality effect: price-per-carat trends upward with clarity
+grade overall, from $2,796/ct at the worst grade (I1) up to $4,259/ct at
+the best grade (IF), though the increase isn't perfectly steady â it dips
+at a couple of intermediate grades (SI2âSI1 and VVS2âVVS1) rather than
+rising in lockstep with grade. Cut and color show a similar pattern: a
+general quality-linked shift in price-per-carat, but not a clean,
+monotonic step at every single grade.
 
 ## Visualizations
 
@@ -73,7 +78,8 @@ at the worst grade (I1) up to $4,259/ct at the best grade (IF).
 Confirms the dominant carat/price relationship directly: price rises
 steeply and non-linearly with carat weight, and the relationship holds
 across all five cut grades (shown by color), though better-cut diamonds
-(darker points) trend slightly higher at a given carat weight.
+(lighter, more teal-green points — Fair, the worst grade, is mapped to
+viridis's darkest purple) trend slightly higher at a given carat weight.
 
 ### 2. Price Distribution by Clarity Grade (Seaborn)
 
