@@ -27,11 +27,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r module_6/src/web/requirements.txt
           pip install -r module_6/src/worker/requirements.txt
+          pip install -e module_6/src/common
           pip install pylint
 
       - name: Run Pylint
         run: |
-          PYTHONPATH=module_6/src/web:module_6/src/web/app:module_6/src/worker:module_6/src/worker/etl:module_6/src/db \
+          PYTHONPATH=module_6/src:module_6/src/web:module_6/src/web/app:module_6/src/worker:module_6/src/db \
           pylint module_6/src/ \
             --rcfile=module_6/.pylintrc \
             --fail-under=10
@@ -71,6 +72,7 @@ jobs:
           pip install -r module_6/src/web/requirements.txt
           pip install -r module_6/src/worker/requirements.txt
           pip install -r module_6/requirements.txt
+          pip install -e module_6/src/common
 
       - name: Run pytest suite with coverage
         run: |
