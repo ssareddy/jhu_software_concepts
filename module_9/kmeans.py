@@ -167,7 +167,7 @@ def plot_initial_clusters(
         output_path: File path to save the resulting PNG to.
     """
     fig, ax = plt.subplots(figsize=(10, 8))
-    scatter = ax.scatter(
+    ax.scatter(
         pca_features[:, 0],
         pca_features[:, 1],
         c=labels,
@@ -178,10 +178,28 @@ def plot_initial_clusters(
     ax.set_title("K-Means Clustering of Grad Cafe Program Names (k=50)")
     ax.set_xlabel("PCA Component 1")
     ax.set_ylabel("PCA Component 2")
-    legend_handles, _ = scatter.legend_elements(num=10)
+
+    # Sample cluster IDs evenly across the full label range (rather than
+    # 0-9), and build the legend directly from those real IDs and their
+    # actual mapped colors -- scatter.legend_elements(num=10) selects
+    # representative *values* from the data (e.g. 0, 5, 10, ..., 45), not
+    # the first 10 cluster indices, so the legend must reflect that.
+    unique_labels = np.sort(np.unique(labels))
+    n_samples = min(10, len(unique_labels))
+    sample_idx = np.linspace(0, len(unique_labels) - 1, num=n_samples).astype(int)
+    sampled_labels = unique_labels[sample_idx]
+
+    cmap = plt.get_cmap("tab20")
+    norm = plt.Normalize(vmin=labels.min(), vmax=labels.max())
+    legend_handles = [
+        plt.Line2D(
+            [0], [0], marker="o", linestyle="", color=cmap(norm(lbl)), markersize=8
+        )
+        for lbl in sampled_labels
+    ]
     ax.legend(
         legend_handles,
-        [f"Cluster {i}" for i in range(len(legend_handles))],
+        [f"Cluster {lbl}" for lbl in sampled_labels],
         title="Cluster (sample)",
         loc="upper right",
         fontsize="x-small",
