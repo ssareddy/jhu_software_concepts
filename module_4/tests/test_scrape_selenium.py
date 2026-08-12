@@ -21,6 +21,7 @@ pylint on some Selenium versions flags as a false-positive
 import os
 import sys
 import time
+import signal
 import urllib.error
 from unittest.mock import MagicMock, patch, call
 
@@ -201,7 +202,9 @@ def test_safe_quit_normal_quit_within_timeout():
 @pytest.mark.analysis
 def test_safe_quit_force_kills_when_quit_hangs():
     """When driver.quit() hangs past the timeout, falls back to os.kill()
-    on the chromedriver process PID."""
+    on the chromedriver process PID, using whichever kill signal is
+    actually available on this platform (SIGKILL on Unix, SIGTERM's
+    numeric fallback on Windows, where SIGKILL doesn't exist)."""
     driver = MagicMock()
     driver.service.process.pid = 12345
 
@@ -210,10 +213,12 @@ def test_safe_quit_force_kills_when_quit_hangs():
 
     driver.quit.side_effect = _hanging_quit
 
-    with patch("os.kill") as mock_kill, patch("signal.SIGKILL", 9):
+    expected_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+    with patch("os.kill") as mock_kill:
         scrape._safe_quit(driver, timeout=0.1)
 
-    mock_kill.assert_called_once_with(12345, 9)
+    mock_kill.assert_called_once_with(12345, expected_signal)
 
 
 @pytest.mark.analysis

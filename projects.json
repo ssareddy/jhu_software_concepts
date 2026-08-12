@@ -8,7 +8,7 @@
   },
   {
     "module": 2,
-    "title": "Module 2: Web Scraping",
+    "title": "Module 2: Web Scraping Assignment",
     "overview": "Wrote a Grad Cafe web scraper using urllib, Selenium, and BeautifulSoup to collect over 30,000 graduate admissions entries, then standardized messy program and university names using a self-hosted local language model (TinyLlama) with post-processing safeguards, producing applicant_data.json and llm_extend_applicant_data.json.",
     "github_link": "https://github.com/ssareddy/jhu_software_concepts/tree/main/module_2",
     "learned": "I learned how to develop a web scraper that follows the rules of the website and properly scrapes data."
