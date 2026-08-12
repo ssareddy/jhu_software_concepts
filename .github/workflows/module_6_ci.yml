@@ -28,6 +28,7 @@ jobs:
           pip install -r module_6/src/web/requirements.txt
           pip install -r module_6/src/worker/requirements.txt
           pip install -e module_6/src/common
+          pip install setuptools
           pip install pylint
 
       - name: Run Pylint
